@@ -1,8 +1,11 @@
 import math
 import typing
 
-import flash_attn
-import flash_attn.layers.rotary
+try:
+  import flash_attn
+  import flash_attn.layers.rotary
+except ImportError:  # only needed for backbone=dit
+  flash_attn = None
 import huggingface_hub
 import omegaconf
 import torch
