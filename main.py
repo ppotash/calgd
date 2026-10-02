@@ -1,4 +1,6 @@
+import json
 import os
+import time
 
 import fsspec
 import hydra
@@ -116,6 +118,60 @@ def generate_samples(config, logger, tokenizer):
           model.gen_ppl_metric.compute())
   return text_samples
 
+def sample_sweep(config, logger, tokenizer):
+  """Generate samples at several step counts; record gen-PPL, entropy, time.
+
+  Writes sample_sweep.json to the Hydra run dir after every setting,
+  so a disconnect loses at most one setting.
+  """
+  model = _load_from_checkpoint(config=config, tokenizer=tokenizer)
+  if config.eval.disable_ema:
+    model.ema = None
+  out_path = os.path.join(os.getcwd(), 'sample_sweep.json')
+  results = {
+    'checkpoint': config.eval.checkpoint_path,
+    'predictor': config.sampling.predictor,
+    'order': config.sampling.get('order'),
+    'fp64': config.sampling.get('fp64', False),
+    'seq_len': config.model.length,
+    'batch_size': config.loader.eval_batch_size,
+    'num_sample_batches': config.sampling.num_sample_batches,
+    'seed': config.seed,
+    'settings': []}
+  for steps in config.sampling.sweep_steps:
+    model.gen_ppl_metric.reset()
+    texts, ents, secs = [], [], 0.0
+    for _ in range(config.sampling.num_sample_batches):
+      torch.cuda.synchronize()
+      t0 = time.time()
+      samples = model.restore_model_and_sample(num_steps=steps)
+      torch.cuda.synchronize()
+      secs += time.time() - t0
+      ents += diffusion.sample_entropy(samples)
+      batch_texts = model.tokenizer.batch_decode(samples)
+      texts += batch_texts
+      model.compute_generative_perplexity(batch_texts)
+    ent = torch.tensor(ents)
+    rec = {'steps': int(steps), 'n_samples': len(texts),
+           'gen_ppl': float(model.gen_ppl_metric.compute()),
+           'entropy_mean': float(ent.mean()),
+           'entropy_std': float(ent.std()) if len(ents) > 1 else 0.0,
+           'sec_per_sample': secs / len(texts),
+           'samples': texts}
+    results['settings'].append(rec)
+    with open(out_path, 'w') as f:
+      json.dump(results, f, indent=1)
+    logger.info(f"steps={rec['steps']:4d}  gen_ppl={rec['gen_ppl']:8.2f}  "
+                f"entropy={rec['entropy_mean']:.3f}  "
+                f"sec/sample={rec['sec_per_sample']:.2f}")
+  print(f"\n{'steps':>6} {'gen_ppl':>9} {'entropy':>8} {'sec/sample':>11}")
+  for r in results['settings']:
+    print(f"{r['steps']:>6} {r['gen_ppl']:>9.2f} {r['entropy_mean']:>8.3f} "
+          f"{r['sec_per_sample']:>11.2f}")
+  print(f'Saved to {out_path}')
+  return results
+
+
 def _ppl_eval(config, logger, tokenizer):
   logger.info('Starting Zero Shot Eval.')
 
@@ -195,6 +251,8 @@ def main(config):
 
   if config.mode == 'sample_eval':
     generate_samples(config, logger, tokenizer)
+  elif config.mode == 'sample_sweep':
+    sample_sweep(config, logger, tokenizer)
   elif config.mode == 'ppl_eval':
     _ppl_eval(config, logger, tokenizer)
   else:

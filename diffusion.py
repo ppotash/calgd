@@ -28,6 +28,31 @@ def _sample_categorical(categorical_probs):
   return (categorical_probs / gumbel_norm).argmax(dim=-1)
 
 
+def _sample_categorical_lowmem(categorical_probs, fp64=False):
+  """Gumbel-max sampling one batch row at a time.
+
+  fp64=True avoids the float32 Gumbel truncation that lowers the effective
+  sampling temperature (and hence gen-PPL and entropy) in masked diffusion
+  samplers. Row-by-row keeps float64 memory to ~0.4 GB per row at L=1024.
+  """
+  out = torch.empty(categorical_probs.shape[:-1], dtype=torch.long,
+                    device=categorical_probs.device)
+  for i in range(categorical_probs.shape[0]):
+    p = categorical_probs[i]
+    out[i] = _sample_categorical(p.double() if fp64 else p)
+  return out
+
+
+def sample_entropy(samples):
+  """Per-sample unigram entropy (nats) of generated token ids, shape [B, L]."""
+  ents = []
+  for row in samples:
+    _, counts = torch.unique(row, return_counts=True)
+    p = counts.double() / counts.sum()
+    ents.append(float(-(p * p.log()).sum()))
+  return ents
+
+
 def _unsqueeze(x, reference):
   return x.view(
     * x.shape,
@@ -527,12 +552,19 @@ class Diffusion(L.LightningModule):
         pre-trained AR model (e.g., GPT2).
     """
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
-    eval_model = transformers.AutoModelForCausalLM.from_pretrained(
-      self.gen_ppl_eval_model_name_or_path).eval()
+    # Cached in a plain dict so it is not registered as a submodule
+    # (keeps it out of parameters(), EMA and checkpoints).
+    if not hasattr(self, '_aux_cache'):
+      self._aux_cache = {}
+    if 'gen_ppl_model' not in self._aux_cache:
+      eval_model = transformers.AutoModelForCausalLM.from_pretrained(
+        self.gen_ppl_eval_model_name_or_path).eval()
+      if 'llama2' not in self.gen_ppl_eval_model_name_or_path:
+        eval_model = eval_model.to(self.device)
+      self._aux_cache['gen_ppl_model'] = eval_model
+    eval_model = self._aux_cache['gen_ppl_model']
     if max_length is None:
       max_length = self.config.model.length
-    if 'llama2' not in self.gen_ppl_eval_model_name_or_path:
-      eval_model = eval_model.to(self.device)
     # Re-tokenize using eval model's tokenizer
     if retokenize:
       (samples, attn_mask,
@@ -604,10 +636,52 @@ class Diffusion(L.LightningModule):
     assert move_chance_t.ndim == p_x0.ndim
     q_xs = p_x0 * (move_chance_t - move_chance_s)
     q_xs[:, :, self.mask_index] = move_chance_s[:, :, 0]
-    _x = _sample_categorical(q_xs)
+    _x = _sample_categorical_lowmem(
+      q_xs, fp64=self.config.sampling.get('fp64', False))
     
     copy_flag = (x != self.mask_index).to(x.dtype)
     return p_x0, copy_flag * x + (1 - copy_flag) * _x
+
+  def _ordered_update(self, x, t, dt):
+    """Fixed-count unmasking with a chosen reveal order.
+
+    Reveals exactly as many tokens as the schedule removes this step
+    (masked fraction after the step = t - dt under the loglinear schedule),
+    and chooses *which* masked positions to reveal by a score:
+      sampling.order=confidence: probability of the sampled token
+      sampling.order=random:     uniform random (same schedule, no ordering)
+    A learned revealer plugs in here as another score.
+    """
+    assert self.config.noise.type == 'loglinear'
+    sigma_t, _ = self.noise(t)
+    if t.ndim > 1:
+      t = t.squeeze(-1)
+    p_x0 = self.forward(x, sigma_t).exp()                      # [B, L, V]
+    cand = _sample_categorical_lowmem(
+      p_x0, fp64=self.config.sampling.get('fp64', False))     # [B, L]
+
+    is_masked = x == self.mask_index
+    seq_len = x.shape[1]
+    n_masked = is_masked.sum(-1)
+    target = torch.round((t - dt).clamp(min=0) * seq_len).long()
+    n_reveal = (n_masked - target).clamp(min=0)
+
+    order = self.config.sampling.get('order', 'confidence')
+    if order == 'confidence':
+      score = p_x0.gather(-1, cand.unsqueeze(-1)).squeeze(-1).float()
+    elif order == 'random':
+      score = torch.rand(x.shape, device=x.device)
+    else:
+      raise ValueError(f'Unknown sampling.order: {order}')
+    return self._reveal_top(x, cand, score, n_reveal)
+
+  def _reveal_top(self, x, cand, score, n_reveal):
+    """Write cand into the n_reveal highest-scoring masked positions per row."""
+    is_masked = x == self.mask_index
+    score = score.masked_fill(~is_masked, float('-inf'))
+    ranks = score.argsort(dim=-1, descending=True).argsort(dim=-1)
+    reveal = (ranks < n_reveal[:, None]) & is_masked
+    return torch.where(reveal, cand, x)
 
   def _ddpm_update(self, x, t, dt):
     sigma_t, _ = self.noise(t)
@@ -684,6 +758,8 @@ class Diffusion(L.LightningModule):
           # Disable caching
           p_x0_cache = None
         x = x_next
+      elif self.sampler == 'ordered':
+        x = self._ordered_update(x, t, dt)
       else:
         x = self._analytic_update(x, t, dt)
 
