@@ -668,7 +668,15 @@ class Diffusion(L.LightningModule):
 
     order = self.config.sampling.get('order', 'confidence')
     if order == 'confidence':
+      # MaskGIT-style: log-prob of the sampled token plus Gumbel noise whose
+      # scale anneals from confidence_temp (t=1) to 0 (t=0). temp=0 is pure
+      # confidence, which collapses into repeated filler tokens unconditionally.
       score = p_x0.gather(-1, cand.unsqueeze(-1)).squeeze(-1).float()
+      temp = self.config.sampling.get('confidence_temp', 0.0)
+      if temp > 0:
+        u = torch.rand_like(score).clamp(1e-10, 1 - 1e-10)
+        gumbel = -torch.log(-torch.log(u))
+        score = score.clamp(min=1e-30).log() + temp * t[:, None].float() * gumbel
     elif order == 'random':
       score = torch.rand(x.shape, device=x.device)
     else:

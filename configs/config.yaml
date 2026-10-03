@@ -29,6 +29,7 @@ loader:
 sampling:
   predictor: ddpm_cache  # analytic, ddpm, ddpm_cache, ordered
   order: confidence  # for predictor=ordered: confidence, random
+  confidence_temp: 0.0  # order=confidence: Gumbel noise scale at t=1, annealed to 0 (MaskGIT uses 4.5)
   fp64: True  # float64 Gumbel sampling (avoids fp32 truncation artifacts)
   sweep_steps: [8, 16, 32, 64, 128]  # for mode=sample_sweep
   steps: 128
