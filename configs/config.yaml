@@ -130,3 +130,26 @@ revealer:  # mode=revealer_label / revealer_train
   train_batch: 256
   margin: 0.0
   seed: 0
+
+latent:  # mode=latent_finetune; latent.ckpt_path also used by sample_sweep
+  bits: 16  # 0 = matched control (adaLN fine-tune, no latent)
+  beta: 0.1  # KL weight in training (1 collapses the latent); bounds use full KL
+  free_bits: 0.0  # optional KL floor per bit (nats)
+  kl_warmup: 0.2  # fraction of steps over which beta ramps up
+  enc_dim: 256
+  enc_layers: 2
+  enc_heads: 4
+  steps: 2000
+  batch_size: 8
+  grad_accum: 2
+  lr: 1e-4  # adaLN layers
+  new_lr_mult: 3.0  # encoder and z projection get lr * this
+  warmup: 100
+  allow_tf32: True
+  log_every: 25
+  eval_every: 250
+  eval_seqs: 128  # held-out sequences (taken from the start of the stream)
+  eval_repeats: 2
+  save_dir: null
+  ckpt_path: null  # trained adapter (final.pt) for sample_sweep
+  seed: 0
