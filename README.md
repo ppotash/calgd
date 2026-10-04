@@ -1,235 +1,250 @@
-# [Simple and Effective Masked Diffusion Language Models](http://arxiv.org/abs/2406.07524) (NeurIPS 2024)
-By [Subham Sekhar Sahoo](https://s-sahoo.github.io), [Marianne Arriola](https://mariannearriola.github.io), [Yair Schiff](https://yair-schiff.github.io), [Aaron Gokaslan](https://skylion007.github.io), [Edgar Marroquin](https://emarro.github.io),
-[Justin T Chiu](https://justinchiu.netlify.app), [Alexander Rush](https://rush-nlp.com), [Volodymyr Kuleshov](https://www.cs.cornell.edu/~kuleshov/)
+# CALGD: Context-Aware Latent-Gated Diffusion
 
-[![arXiv](https://img.shields.io/badge/arXiv-2406.07524-red.svg)](https://arxiv.org/abs/2406.07524)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/18nC6q7dWq154fI1BXPLwmtnS7Zvbrv6p?usp=sharing/)
-[![YouTube](https://img.shields.io/badge/YouTube-%23FF0000.svg?logo=YouTube&logoColor=white)](https://youtu.be/WjAUX23vgfg?si=lI-qiDFqh25qtnQ8)
-[![deploy](https://img.shields.io/badge/Blog%20%20-8A2BE2)](https://s-sahoo.com/mdlm/)
-[![deploy](https://img.shields.io/badge/Huggingface%20-MDLM%20-blue)](https://huggingface.co/collections/kuleshov-group/mdlm-6671bee1cc71f0dce4f2d00a)
-[![Open In Studio](https://pl-bolts-doc-images.s3.us-east-2.amazonaws.com/app-2/studio-badge.svg)](https://lightning.ai/lightning-ai/studios/simple-and-effective-masked-diffusion-language-models)
+**Does a sampled discrete latent, or an information-gain revealer, improve few-step sampling in
+masked diffusion language models?**
 
-[**Update April 14, 2025: An improved implementation is available here:** [DUO Github repo](https://github.com/s-sahoo/duo).]
+This is a research fork of [MDLM](https://github.com/kuleshov-group/mdlm) (Sahoo et al.,
+NeurIPS 2024). All credit for the base framework, models and checkpoints goes to the original
+authors; see [Based on MDLM](#based-on-mdlm) and [Citation](#citation).
 
-[**Update Jun 3, 2025: MDMs with KV caching:** [Eso-LMs Github repo](https://github.com/s-sahoo/Eso-LMs).]
+> **Status:** baselines reproduced; the revealer is a documented **negative** result; the latent
+> bits give a large, replicated gain on synthetic data. Next: the latent at real scale, as a
+> fine-tune of the MDLM checkpoint. See [Roadmap](#roadmap).
 
-![graphical_abstract_updated_2](https://github.com/s-sahoo/mdlm/assets/16799748/b0cab23a-d966-45fa-a3ad-be972b23a98a)
+## Motivation
 
-We introduce *MDLM*, a **M**asked discrete **D**iffusion **L**anguage **M**odel that features
-a novel (SUBS)titution based
-parameterization which simplifies the absorbing state diffusion
-loss to a mixture of
-classical masked language modeling losses. In doing so, we achieve
-SOTA perplexity numbers on LM1B and OpenWebText among diffusion models while achiving competitive zero-shot perplexity with SOTA AR models on numerous datasets. We provide a demo in this [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/18nC6q7dWq154fI1BXPLwmtnS7Zvbrv6p?usp=sharing/) notebook or [![Open In Studio](https://pl-bolts-doc-images.s3.us-east-2.amazonaws.com/app-2/studio-badge.svg)](https://lightning.ai/lightning-ai/studios/simple-and-effective-masked-diffusion-language-models) and a video tutorial here:
-<p align="center">
-  <a href="https://youtu.be/WjAUX23vgfg?si=bM1E-Bt-nwOmsVif" title="Click">
-    <img src="https://github.com/s-sahoo/mdlm/blob/gh-pages/static/images/youtube_thumbnail.png" alt="Everything Is AWESOME" style="width:50%;">
-  </a>
-</p>
+Masked diffusion LMs generate by unmasking many tokens in parallel. Tokens unmasked in the same
+step are sampled independently given the current context, which is the main source of quality
+loss when sampling with few steps. This project tests two ways of reducing that loss:
 
+1. **Latent bits.** A short vector of discrete bits `z` is sampled once per sequence and
+   conditions the denoiser, so tokens decoded in the same step share `z` and can be correlated
+   instead of independent. Training uses an encoder `q(z | x0)`, a uniform prior `p(z)` for
+   sampling, and a KL term. The KL must be down-weighted during training (weight ≈ 0.1): under
+   the exact bound the latent collapses (see the probe below). Reported bounds use the full KL.
+2. **Information-gain revealer.** A small head scores masked positions by how much revealing them
+   would reduce the loss on the rest of the sequence, and the sampler unmasks the highest-scoring
+   positions first. It is trained on counterfactual reveals with a pairwise ranking loss.
 
-In this repo, we release:
-* **The MDLM framework.**
-  1. SUBStitution based parameterization
-  2. Simplified loss calculation for masked diffusion processes
-* **Baseline implementations** [[Examples]](#baselines):
-  1. Autoregressive model that matches the SOTA AR performance on LM1B.
-  2. Score Entropy Based Discrete Diffusion [SEDD](https://arxiv.org/abs/2310.16834).
-  3. An efficient implementation of the absorbing state [D3PM](https://arxiv.org/abs/2107.03006) that beats the previous SOTA text diffusion model SEDD on LM1B.
-* **Samplers**
-  1. Ancestral sampling as proposed in D3PM.
-  2. Analytic sampler as proposed in SEDD.
-  3. Our proposed efficient sampler that
-     - makes MDLM **~3-4x** faster than the existing diffusion models. [[Example]](#sample-gen)
-     - supports semi-autoregressive (SAR) generation.  [[Example]](#semi-ar-gen)
+The claim being tested is about **sample quality at a fixed small number of steps**, at matched
+compute and matched diversity; neither idea is expected to improve likelihood much.
 
-<a name="code-organization"></a>
-## Code Organization
-1. ```main.py```: Routines for training and evaluation
-2. ```noise_schedule.py```: Noise schedules
-3. ```diffusion.py```: Forward/reverse diffusion
-4. ```dataloader.py```: Dataloaders
-5. ```utils.py```: LR scheduler, logging, `fsspec` handling
-6. ```models/```: Denoising network architectures. Supports [DiT](https://arxiv.org/abs/2212.09748), AR transformer, and [Mamba](https://arxiv.org/abs/2312.00752)
-7. ```configs/```: Config files for datasets/denoising networks/noise schedules/LR schedules
-8. ```scripts/```: Shell scripts for training/evaluation
+## Evaluation protocol
 
+- **Primary:** generative perplexity under GPT-2 Large **and** per-sample token entropy, at
+  16/32/64 sampling steps. Lower generative perplexity can come from repetitive text, so samplers
+  are compared at matched entropy; real OpenWebText has 5.45 ± 0.16 nats.
+- **Sampler baselines:** MDLM's `ddpm_cache`; fixed-count unmasking in random order; and
+  confidence order with MaskGIT-style annealed noise, swept over temperature to trace a curve.
+- **Secondary:** validation perplexity bound (OpenWebText, WikiText-2, PTB).
+- **Noise:** single-run perplexity varies by about ±4% on WikiText-2, and generative perplexity
+  from 64 samples by about ±10%, so comparisons use several seeds or confidence intervals.
 
-<a name="getting_started"></a>
+## Roadmap
 
-## Getting started in this repository
+- [x] **Reproduce the baseline** on the released MDLM checkpoint.
+- [x] **Evaluation pipeline:** `mode=sample_sweep`, sample entropy, ordered samplers, float64
+      sampling.
+- [x] **Baseline sweeps** for MDLM, random and confidence ordering.
+- [x] **Revealer on the frozen MDLM checkpoint** (negative; see results).
+- [x] **Synthetic probes** for the latent (positive, 3 seeds; see results).
+- [ ] **Latent fine-tune of MDLM** (encoder + latent conditioning, KL weight 0.1) with a matched
+      no-latent fine-tune as control.
+- [ ] **Latent from scratch** at ~125M parameters on OpenWebText, if the fine-tune is positive.
 
-To get started, create a conda environment containing the required dependencies.
+## Results
+
+### Baseline reproduction
+
+Released checkpoint `kuleshov-group/mdlm-no_flashattn-fp32-owt`, evaluated on a Colab T4:
+
+| Metric | Value | Notes |
+|---|---|---|
+| WikiText-2 val PPL | 35.2 (range 33.4–36.4) | 3 seeds; paper reports ≤32.83 |
+| PTB val PPL | ~108 | 1 seed; paper reports ≤95.26 |
+
+The paper's zero-shot numbers come from a longer-trained model, which likely explains most of the
+gap. All comparisons in this project are against these measured baselines.
+
+### Sampler baselines (64 samples per point)
+
+Gen-PPL under GPT-2 Large; real OpenWebText entropy is 5.45 ± 0.16 nats.
+
+| Steps | `ddpm_cache` | Random order | Confidence @ entropy 5.45 |
+|---|---|---|---|
+| 16 | 342 | 348 | ≈117 |
+| 32 | 196 | 184 | ≈75 |
+| 64 | 137 | 140 | ≈60 |
+
+- **Ordering matters a lot:** at real-text entropy, confidence ordering lowers generative
+  perplexity 2.3–3× versus random order, and at 16 steps it beats random order at 64.
+- **Pure confidence ordering collapses** into repeated filler tokens (entropy 0.3–1.4); annealed
+  noise fixes this, and the temperature trades fluency for diversity (T≈20 reaches real-text
+  entropy).
+- **Random order and MDLM's sampler are equivalent:** only which positions are revealed matters,
+  not whether the count per step is fixed.
+
+![Sampler baselines and revealer](docs/baseline_frontier.png)
+
+### Revealer: negative result
+
+A reveal head on the frozen MDLM checkpoint, trained on counterfactual labels: for 8 masked
+candidates per sequence, reveal the candidate with a value sampled from the model (4 independent
+samples) and measure the drop in mean loss on the remaining masked tokens. Pairwise ranking loss;
+the head learns a correction on top of confidence. 2,581 labeled sequences (2,063 train / 518 val).
+
+- **Labels are dominated by whether the sampled value is right.** Two halves of the samples agree
+  on 73% of candidate pairs (within-sequence r = 0.42; ≈0.59 for the 4-sample average).
+- **Ranking:** head 0.600 vs. confidence 0.592 pairwise accuracy (+0.009, 95% CI +0.002 to +0.016).
+  On sample-averaged gains, head 0.633 vs. 0.627 for Σp² (mean sampled-token probability).
+- **Sampling:** at matched temperature the revealer is indistinguishable from confidence ordering
+  (gen-PPL within ~2% at 16/32/64 steps, T=10 and T=20; diamonds in the figure above).
+
+Interpretation: measured against the true text, "most informative reveal" collapses to "most likely
+correct", which confidence already captures. At the noise level needed for real-text diversity
+(T≈20), early unmasking is close to random for any scorer, so a scorer would need to be far better
+than confidence to matter. Cost: about 3 L4-hours.
+
+### Latent-bits probe (synthetic data)
+
+Sequences of 32 tokens generated by one of 16 hidden modes; a sample is valid if all its tokens
+come from a single mode. Small masked diffusion transformers trained from scratch, with and
+without 4 latent bits (encoder in training, uniform prior at sampling). 3 seeds; each seed also
+draws a different set of modes.
+
+| Valid samples (mean of 3 seeds) | 1 step | 4 steps | 16 steps | 64 steps |
+|---|---|---|---|---|
+| No latent | 0.00 | 0.01 | 0.35 | 0.70 |
+| 4 bits, KL weight 0.1 | 0.69 | 0.76 | 0.87 | 0.89 |
+
+- **Trained on the exact likelihood bound, the latent collapses** (KL → 0.01–0.03 nats) and
+  gives no benefit. With a perfect denoiser a masked diffusion model's bound is already tight,
+  so a latent's KL cost cancels its gain; its value is only in few-step sampling, which the
+  per-token training loss never measures.
+- **With KL weight 0.1 (or free bits ≈ 0.65 nats/bit) the code is used and sharp,** and
+  few-step validity improves dramatically, while the bound (evaluated with the full KL) is
+  slightly better than without the latent in every seed. Mode coverage stays near uniform, and
+  samples' true likelihood stays above the data's own, so the gain is not bought with diversity.
+- **Code sharpness matters more than size.** A noisy code (free bits 0.5) barely helps at one
+  step; 8 bits for 16 modes wastes most of the prior on codes the encoder never uses.
+- **On Markov-structured data,** the latent removes mode-mixing errors (one-step local validity
+  0.22 → 0.44) but cannot replace steps for within-mode dependencies.
+
+![Latent probe](docs/probe/probe_v1.png)
+
+Script: `probes/latent_probe.py`; per-run figures and metrics in `docs/probe/`.
+
+## Changes from upstream MDLM
+
+- **Optional heavy dependencies.** `flash-attn`, `mamba-ssm` and `causal-conv1d` imports are
+  optional, so evaluation runs on GPUs without flash-attention (e.g. a T4).
+- **`mode=sample_sweep`.** Generates samples at several step counts and records generative
+  perplexity, entropy, seconds per sample and the samples themselves to `sample_sweep.json`.
+- **`sampling.predictor=ordered`.** Fixed-count unmasking with `sampling.order=` `random`,
+  `confidence` (with `sampling.confidence_temp`, MaskGIT-style annealed noise) or `revealer`
+  (with `sampling.revealer_path` and `sampling.revealer_temp`).
+- **`sampling.fp64` (default `True`).** Float64 categorical sampling, avoiding float32 truncation
+  that understates generative perplexity. Set `False` to reproduce stock MDLM sampling.
+- **Revealer pipeline** (`revealer.py`): `mode=revealer_label` (counterfactual information-gain
+  labels, resumable) and `mode=revealer_train` (head training with confidence baselines,
+  reliability and bootstrap confidence intervals).
+- **Latent probe** (`probes/latent_probe.py`): standalone synthetic experiment.
+- **GPT-2 Large is loaded once** for generative perplexity instead of on every batch.
+
+## Quickstart
+
+On Colab, follow **[docs/colab.md](docs/colab.md)** for setup (Python 3.13 and flash-attention
+workarounds) and for the revealer and probe commands. For example:
 
 ```bash
-conda env create -f requirements.yaml
-conda activate mdlm
+# Zero-shot perplexity
+python main.py mode=ppl_eval backbone=hf_dit eval.checkpoint_path=/content/mdlm-nofa \
+  data=wikitext2 model.length=1024 loader.batch_size=8 loader.eval_batch_size=8 \
+  trainer.precision=32 eval.generate_samples=False wandb=null
+
+# Sample sweep with confidence-ordered unmasking
+python main.py mode=sample_sweep backbone=hf_dit eval.checkpoint_path=/content/mdlm-nofa \
+  eval.disable_ema=True data=openwebtext-split model.length=1024 \
+  sampling.predictor=ordered sampling.order=confidence sampling.confidence_temp=20 \
+  loader.eval_batch_size=8 sampling.num_sample_batches=8 wandb=null
+
+# Latent probe
+python probes/latent_probe.py --out probe_out --bits 0 4 --beta 0.1 --tag beta0.1
 ```
 
-Create the following directories to store saved models and slurm logs:
+On a GPU with flash-attention (Ampere or newer), `eval.checkpoint_path=kuleshov-group/mdlm-owt`
+also works; drop `trainer.precision=32`.
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `main.py` | Entry point: training, `ppl_eval`, `sample_eval`, `sample_sweep`, `revealer_label`, `revealer_train` |
+| `diffusion.py` | Forward/reverse diffusion, samplers (incl. `ordered`), generative perplexity |
+| `revealer.py` | Revealer head, information-gain labels, ranking loss, metrics |
+| `probes/latent_probe.py` | Synthetic latent-bits probe |
+| `noise_schedule.py` | Noise schedules |
+| `dataloader.py` | Datasets and dataloaders |
+| `models/` | Denoisers: DiT, AR transformer, Mamba |
+| `configs/` | Hydra configs (data, models, noise, sampling, revealer) |
+| `scripts/` | Upstream Slurm scripts |
+| `docs/` | Colab guide, figures, probe results |
+
+## Based on MDLM
+
+This repository is a fork of [kuleshov-group/mdlm](https://github.com/kuleshov-group/mdlm), which
+introduced MDLM, a masked diffusion LM with a substitution-based parameterization that reduces the
+absorbing-state diffusion loss to a mixture of masked-language-modeling losses. The upstream
+authors note that an improved implementation is available in the
+[DUO repo](https://github.com/s-sahoo/duo), and MDMs with KV caching in the
+[Eso-LMs repo](https://github.com/s-sahoo/Eso-LMs).
+
+<details>
+<summary>Upstream usage reference</summary>
+
+**Checkpoints.** MDLM trained on OpenWebText for 1M steps:
+[kuleshov-group/mdlm-owt](https://huggingface.co/kuleshov-group/mdlm-owt) (flash-attention) and
+[kuleshov-group/mdlm-no_flashattn-fp32-owt](https://huggingface.co/kuleshov-group/mdlm-no_flashattn-fp32-owt)
+(regular attention, float32). AR and SEDD baseline checkpoints are in the upstream
+[Google Drive folder](https://drive.google.com/drive/folders/16LuuptK7Xfk-vzhQYZBZ0SA-B-BFluau?usp=sharing).
+
+**Environment (upstream).** `conda env create -f requirements.yaml && conda activate mdlm`.
+
+**Samplers.** `sampling.predictor` takes `ddpm_cache` (MDLM's fast sampler), `ddpm` (D3PM
+ancestral sampling), `analytic` (SEDD), and in this fork `ordered`. Semi-autoregressive generation
+of longer sequences: `sampling.semi_ar=True sampling.stride_length=512 sampling.num_strides=2`.
+
+**Generate samples:**
 ```bash
-mkdir outputs
-mkdir watch_folder
+python main.py mode=sample_eval eval.checkpoint_path=kuleshov-group/mdlm-owt \
+  data=openwebtext-split model.length=1024 sampling.predictor=ddpm_cache \
+  sampling.steps=1000 loader.eval_batch_size=1 sampling.num_sample_batches=10 backbone=hf_dit
 ```
-and run the training as a batch job:
+
+**Train MDLM from scratch on OpenWebText:**
 ```bash
-sbatch scripts/train_owt_mdlm.sh
+python main.py model=small data=openwebtext-split wandb.name=mdlm-owt parameterization=subs \
+  model.length=1024 eval.compute_generative_perplexity=True sampling.steps=1000
 ```
+`loader.batch_size` and `loader.eval_batch_size` set the per-GPU batch sizes; Lightning uses
+gradient accumulation to reach the global batch size. Slurm scripts are in `scripts/`.
 
-### Checkpoints
-
-We have uploaded MDLM model trained on OpenWebText for 1M training steps to the Huggingface hub 🤗:
-[kuleshov-group/mdlm-owt](https://huggingface.co/kuleshov-group/mdlm-owt)
-Furthermore, we have released the checkpoints for the AR and SEDD baselines trained on OpenWebText in this [Google Drive folder](https://drive.google.com/drive/folders/16LuuptK7Xfk-vzhQYZBZ0SA-B-BFluau?usp=sharing).
-
-## Reproducing Experiments
-
-Below, we describe the steps required for reproducing the experiments in the paper.
-Throughout, the main entry point for running experiments is the [`main.py`](./main.py) script.
-We also provide sample `slurm` scripts for launching pre-training and downstream fine-tuning experiments in the [`scrips/`](./scripts) directory.
-
-
-### Generate Samples
-<a name="sample-gen"></a>
-The argument to `sampling.predictor` specifies the sampler which takes one of the following values:
-* `ddpm_cache`: our proposed sampler that's **~3-4x** faster than the samplers propsed in D3PM and SEDD.
-* `ddpm`: Ancestral sampling proposed in D3PM.
-* `analytic`: Analytic sampler proposed in SEDD.
-
-In the following table we report wall clock time to generate 64 samples on a single A5000 GPU with `batch_size=1`. $T$ denotes the time discretization of the reverse process.
-|                         | $T=5k (\downarrow)$ | $T=10k (\downarrow)$ |
-|-------------------------|---------------------|----------------------|
-| **SEDD**                | 127.1               | 229.3                |
-| **MDLM** + `ddpm`       | 113.8               | 206.6                |
-| **MDLM** +`ddpm_cache`  | **40.1**            | **60.4**             |
-
-
-To generate samples from a pre-trained model use one of the following commands:
-#### Huggingface model
+**Perplexity of a local checkpoint:**
 ```bash
-python main.py \
-  mode=sample_eval \
-  eval.checkpoint_path=kuleshov-group/mdlm-owt \
-  data=openwebtext-split  \
-  model.length=1024  \
-  sampling.predictor=ddpm_cache  \
-  sampling.steps=1000 \
-  loader.eval_batch_size=1 \
-  sampling.num_sample_batches=10 \
-  backbone=hf_dit
+python main.py mode=ppl_eval loader.batch_size=16 loader.eval_batch_size=16 \
+  data=openwebtext-split model=small parameterization=subs backbone=dit model.length=1024 \
+  eval.checkpoint_path=/path/to/checkpoint/mdlm.ckpt +wandb.offline=true
 ```
-#### Local checkpoint
-```bash
-python main.py \
-  mode=sample_eval \
-  eval.checkpoint_path=/path/to/checkpoint/mdlm.ckpt \
-  data=openwebtext-split  \
-  model.length=1024  \
-  sampling.predictor=ddpm_cache  \
-  sampling.steps=10000 \
-  loader.eval_batch_size=1 \
-  sampling.num_sample_batches=1 \
-  backbone=dit
-```
+For the AR baseline use `model=small-ar parameterization=ar backbone=ar`; for SEDD use
+`parameterization=sedd time_conditioning=True sampling.predictor=analytic`.
 
-### Semi-AR sample generation
-<a name="semi-ar-gen"></a>
-MDLM can also generate samples of arbitrary length in a semi-autoregressive (SAR) manner.
-We generate 200 sequences of length 2048 tokens on a single `3090` GPU and evaluate generative perplexity under a pre-trained GPT-2 model. In the below table we find that in addition to achieving better generative perplexity, MDLM enables **25-30x** faster SAR decoding relative to [SSD-LM](https://arxiv.org/abs/2210.17432).
-
-|                     | Gen. PPL ($\downarrow$) | Sec/Seq ($\downarrow$) |
-|---------------------|-------------------------|------------------------|
-| **SSD-LM**          | 35.43                   | 2473.9                 |
-| **MDLM** +`ddpm_cache`  | **27.18**               | **89.3**               |
-
-*Gen. PPL: Generation Perplexity, Sec/Seq: Seconds per Sequence*
-
-```bash
-python main.py \
-  mode=sample_eval \
-  eval.checkpoint_path=kuleshov-group/mdlm-owt \
-  data=openwebtext-split \
-  parameterization=subs \
-  model.length=1024  \
-  sampling.predictor=ddpm_cache  \
-  sampling.steps=1000 \
-  loader.eval_batch_size=1 \
-  sampling.num_sample_batches=2 \
-  sampling.semi_ar=True \
-  sampling.stride_length=512 \
-  sampling.num_strides=2 \
-  backbone=hf_dit
-```
-
-### Train
-To train MDLM from scratch on OpenWebText use the following command:
-```
-python main.py \
-  model=small \
-  data=openwebtext-split \
-  wandb.name=mdlm-owt \
-  parameterization=subs \
-  model.length=1024 \
-  eval.compute_generative_perplexity=True \
-  sampling.steps=1000
-```
-The arguments `loader.batch_size` and `loader.eval_batch_size` allow you to control the global batch size and the batch size per GPU. If `loader.batch_size * num_gpus` is less than the global batch size, PyTorch Lightning will resort to gradient accumulation. You can also launch a training job on Slurm using the command: `sbatch scripts/train_owt_mdlm.sh`. The slurm scripts to train the Auto-regressive and SEDD baselines are as follows respectively: [`scripts/train_lm1b_ar.sh`](scripts/train_lm1b_ar.sh), [`scripts/train_owt_sedd.sh`](scripts/train_owt_sedd.sh).
-
-### Eval 
-To compute test perplexity, use `mode=ppl_eval`. Example scripts provided in `scripts/`. An example command for perplexity evaluation on OpenWebText is:
-```
-python main.py \
-  mode=ppl_eval \
-  loader.batch_size=16 \
-  loader.eval_batch_size=16 \
-  data=openwebtext-split \
-  model=small \
-  parameterization=subs \
-  backbone=dit \
-  model.length=1024 \
-  eval.checkpoint_path=/path/to/checkpoint/mdlm.ckpt \
-  +wandb.offline=true
-```
-
-### Baseline evaluation
-<a name="baselines"></a>
-We release the checkpoints for the baselines: SEDD and AR trained on OpenWebText in this [Google Drive folder](https://drive.google.com/drive/folders/16LuuptK7Xfk-vzhQYZBZ0SA-B-BFluau?usp=sharing). Download the checkpoints: `ar.ckpt`, `sedd.ckpt` and use the following commands to compute test perplexity:
-#### AR
-```bash
-python main.py \
-  mode=ppl_eval \
-  loader.batch_size=16 \
-  loader.eval_batch_size=16 \
-  data=openwebtext-split \
-  model=small-ar \
-  parameterization=ar \
-  backbone=ar \
-  model.length=1024 \
-  eval.checkpoint_path=/path/to/checkpoint/ar.ckpt \
-  +wandb.offline=true
-```
-#### SEDD
-```bash
-python main.py \
-  mode=ppl_eval \
-  loader.batch_size=16 \
-  loader.eval_batch_size=16 \
-  data=openwebtext-split \
-  model=small \
-  parameterization=sedd \
-  backbone=dit \
-  model.length=1024 \
-  eval.checkpoint_path=/path/to/checkpoint/sedd.ckpt \
-  time_conditioning=True \
-  sampling.predictor=analytic \
-  +wandb.offline=true
-```
-
-### Acknowledgements
-This repository was built off of [SEDD](https://github.com/louaaron/Score-Entropy-Discrete-Diffusion).
+</details>
 
 ## Citation
-```
+
+If you use this code, please cite MDLM:
+
+```bibtex
 @inproceedings{
 sahoo2024simple,
 title={Simple and Effective Masked Diffusion Language Models},
@@ -239,3 +254,9 @@ year={2024},
 url={https://openreview.net/forum?id=L4uaAR4ArM}
 }
 ```
+
+## Acknowledgements and license
+
+Built on [MDLM](https://github.com/kuleshov-group/mdlm), which itself builds on
+[SEDD](https://github.com/louaaron/Score-Entropy-Discrete-Diffusion). Licensed under Apache-2.0,
+as is the upstream project; see `LICENSE`.
