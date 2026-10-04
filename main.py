@@ -172,6 +172,116 @@ def sample_sweep(config, logger, tokenizer):
   return results
 
 
+def revealer_label(config, logger, tokenizer):
+  """Label streamed OpenWebText chunks with counterfactual information gains.
+
+  Writes shard_XXXX.pt files plus progress.json to revealer.label_dir;
+  rerunning resumes after the last completed shard.
+  """
+  import revealer
+  rc = config.revealer
+  assert rc.label_dir, 'set revealer.label_dir'
+  if rc.allow_tf32:   # labels only; sampling evaluations keep full fp32
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+  os.makedirs(rc.label_dir, exist_ok=True)
+  progress_path = os.path.join(rc.label_dir, 'progress.json')
+  progress = (json.load(open(progress_path)) if os.path.exists(progress_path)
+              else {'shards': 0, 'consumed': 0})
+  if progress['shards'] >= rc.n_shards:
+    logger.info(f"All {rc.n_shards} shards already labeled.")
+    return
+  model = _load_from_checkpoint(config=config, tokenizer=tokenizer)
+  model.eval()
+  capture = revealer.HiddenCapture(model.backbone)
+  logger.info(f'Hidden states captured at: {capture.name}')
+  stream = revealer.owt_chunks(model.tokenizer, config.model.length,
+                               skip=progress['consumed'])
+  torch.manual_seed(rc.seed + progress['shards'])
+  consumed = progress['consumed']
+  for shard in range(progress['shards'], rc.n_shards):
+    recs, n_lab, t0 = [], 0, time.time()
+    while n_lab < rc.shard_size:
+      batch = [next(stream) for _ in range(rc.batch_size)]
+      consumed += len(batch)
+      x0 = torch.tensor(batch, device=model.device)
+      out = revealer.label_batch(
+        model, capture, x0, eps=config.training.sampling_eps, k=rc.k,
+        use_ground_truth=rc.ground_truth, chunk=rc.chunk)
+      if out is not None:
+        recs.append(out)
+        n_lab += out['gain'].shape[0]
+    data = {key: torch.cat([r[key] for r in recs]) for key in recs[0]}
+    torch.save(data, os.path.join(rc.label_dir, f'shard_{shard:04d}.pt'))
+    with open(progress_path, 'w') as f:
+      json.dump({'shards': shard + 1, 'consumed': consumed}, f)
+    g = data['gain']
+    logger.info(f'shard {shard + 1}/{rc.n_shards}: {n_lab} seqs, '
+                f'{n_lab / (time.time() - t0):.2f} seq/s, '
+                f'gain mean {g.mean():.2e} (neg {(g < 0).float().mean():.0%})')
+
+
+def revealer_train(config, logger, tokenizer):
+  """Train the reveal head on labeled shards (no denoiser passes needed)."""
+  import revealer
+  rc = config.revealer
+  files = revealer.shard_files(rc.label_dir)
+  assert len(files) > rc.val_shards, (
+    f'need more than {rc.val_shards} shards in {rc.label_dir}, '
+    f'found {len(files)}')
+  val = revealer.load_shards(files[:rc.val_shards])
+  tr = revealer.load_shards(files[rc.val_shards:])
+  head_path = rc.head_path or os.path.join(rc.label_dir, 'revealer_head.pt')
+  device = 'cuda' if torch.cuda.is_available() else 'cpu'
+  torch.manual_seed(rc.seed)
+  logger.info(f"train {tr['gain'].shape[0]} seqs, val {val['gain'].shape[0]} "
+              f"seqs, k={tr['gain'].shape[1]}")
+
+  def report(name, score, data):
+    pair, top1 = revealer.ranking_metrics(score, data['gain'], rc.margin)
+    bins = []
+    for lo, hi in [(0, 1 / 3), (1 / 3, 2 / 3), (2 / 3, 1.01)]:
+      sel = (data['t'] >= lo) & (data['t'] < hi)
+      if sel.any():
+        bins.append(revealer.ranking_metrics(
+          score[sel], data['gain'][sel], rc.margin)[0])
+    logger.info(f'{name:<26} pair acc {pair:.3f}  top-1 {top1:.3f}  '
+                f'pair acc by t [low/mid/high] '
+                + ' / '.join(f'{b:.3f}' for b in bins))
+    return pair
+
+  logger.info('Validation baselines (pair acc 0.5 and top-1 1/k = random):')
+  report('random', torch.rand_like(val['gain']), val)
+  report('confidence (sampled tok)', val['cand_prob'], val)
+  report('max prob', val['feats'][..., 1], val)
+  report('neg entropy', -val['feats'][..., 0], val)
+
+  head = revealer.RevealHead(tr['hidden'].shape[-1], width=rc.width).to(device)
+  opt = torch.optim.AdamW(head.parameters(), lr=rc.lr, weight_decay=0.01)
+  n, best = tr['gain'].shape[0], -1.0
+  for ep in range(rc.epochs):
+    head.train()
+    perm, tot = torch.randperm(n), 0.0
+    for i in range(0, n, rc.train_batch):
+      idx = perm[i:i + rc.train_batch]
+      score = head(tr['hidden'][idx].to(device), tr['feats'][idx].to(device))
+      loss = revealer.pairwise_rank_loss(
+        score, tr['gain'][idx].to(device), rc.margin)
+      opt.zero_grad()
+      loss.backward()
+      opt.step()
+      tot += loss.item() * len(idx)
+    head.eval()
+    with torch.no_grad():
+      vs = head(val['hidden'].to(device), val['feats'].to(device)).cpu()
+    pair = report(f'head epoch {ep + 1:>3} (loss {tot / n:.3f})', vs, val)
+    if pair > best:
+      best = pair
+      head.save(head_path, extra={'epoch': ep + 1, 'val_pair_acc': pair,
+                                  'label_dir': rc.label_dir})
+  logger.info(f'Best val pair acc {best:.3f}; head saved to {head_path}')
+
+
 def _ppl_eval(config, logger, tokenizer):
   logger.info('Starting Zero Shot Eval.')
 
@@ -251,6 +361,10 @@ def main(config):
 
   if config.mode == 'sample_eval':
     generate_samples(config, logger, tokenizer)
+  elif config.mode == 'revealer_label':
+    revealer_label(config, logger, tokenizer)
+  elif config.mode == 'revealer_train':
+    revealer_train(config, logger, tokenizer)
   elif config.mode == 'sample_sweep':
     sample_sweep(config, logger, tokenizer)
   elif config.mode == 'ppl_eval':

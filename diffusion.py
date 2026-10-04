@@ -16,6 +16,7 @@ from torch import Tensor
 import dataloader
 import models
 import noise_schedule
+import revealer
 import utils
 
 LOG2 = math.log(2)
@@ -41,6 +42,11 @@ def _sample_categorical_lowmem(categorical_probs, fp64=False):
     p = categorical_probs[i]
     out[i] = _sample_categorical(p.double() if fp64 else p)
   return out
+
+
+def _gumbel_like(x):
+  u = torch.rand_like(x).clamp(1e-10, 1 - 1e-10)
+  return -torch.log(-torch.log(u))
 
 
 def sample_entropy(samples):
@@ -653,10 +659,14 @@ class Diffusion(L.LightningModule):
     A learned revealer plugs in here as another score.
     """
     assert self.config.noise.type == 'loglinear'
+    order = self.config.sampling.get('order', 'confidence')
+    if order == 'revealer':
+      self._ensure_revealer()   # registers the hidden-state hook before forward
     sigma_t, _ = self.noise(t)
     if t.ndim > 1:
       t = t.squeeze(-1)
-    p_x0 = self.forward(x, sigma_t).exp()                      # [B, L, V]
+    log_p = self.forward(x, sigma_t)                           # [B, L, V]
+    p_x0 = log_p.exp()
     cand = _sample_categorical_lowmem(
       p_x0, fp64=self.config.sampling.get('fp64', False))     # [B, L]
 
@@ -666,7 +676,6 @@ class Diffusion(L.LightningModule):
     target = torch.round((t - dt).clamp(min=0) * seq_len).long()
     n_reveal = (n_masked - target).clamp(min=0)
 
-    order = self.config.sampling.get('order', 'confidence')
     if order == 'confidence':
       # MaskGIT-style: log-prob of the sampled token plus Gumbel noise whose
       # scale anneals from confidence_temp (t=1) to 0 (t=0). temp=0 is pure
@@ -674,14 +683,33 @@ class Diffusion(L.LightningModule):
       score = p_x0.gather(-1, cand.unsqueeze(-1)).squeeze(-1).float()
       temp = self.config.sampling.get('confidence_temp', 0.0)
       if temp > 0:
-        u = torch.rand_like(score).clamp(1e-10, 1 - 1e-10)
-        gumbel = -torch.log(-torch.log(u))
-        score = score.clamp(min=1e-30).log() + temp * t[:, None].float() * gumbel
+        score = (score.clamp(min=1e-30).log()
+                 + temp * t[:, None].float() * _gumbel_like(score))
     elif order == 'random':
       score = torch.rand(x.shape, device=x.device)
+    elif order == 'revealer':
+      # Learned information-gain scores, with the same annealed-noise knob.
+      capture, head = self._aux_cache['revealer']
+      score = head(capture.hidden, revealer.token_features(log_p, t))
+      temp = self.config.sampling.get('revealer_temp', 0.0)
+      if temp > 0:
+        score = score + temp * t[:, None].float() * _gumbel_like(score)
     else:
       raise ValueError(f'Unknown sampling.order: {order}')
     return self._reveal_top(x, cand, score, n_reveal)
+
+  def _ensure_revealer(self):
+    """Load the reveal head and hook the backbone's final hidden states once."""
+    if not hasattr(self, '_aux_cache'):
+      self._aux_cache = {}
+    if 'revealer' not in self._aux_cache:
+      path = self.config.sampling.get('revealer_path')
+      assert path, 'sampling.order=revealer needs sampling.revealer_path'
+      head = revealer.RevealHead.load(path).to(self.device).eval()
+      for p in head.parameters():
+        p.requires_grad_(False)
+      self._aux_cache['revealer'] = (revealer.HiddenCapture(self.backbone),
+                                     head)
 
   def _reveal_top(self, x, cand, score, n_reveal):
     """Write cand into the n_reveal highest-scoring masked positions per row."""
