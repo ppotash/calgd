@@ -1,0 +1,186 @@
+{
+ "args": {
+  "out": "/content/drive/MyDrive/calgd/probe_markov_long",
+  "data": [
+   "markov"
+  ],
+  "bits": [
+   4
+  ],
+  "vocab": 64,
+  "seq_len": 32,
+  "modes": 16,
+  "subset": 12,
+  "n_succ": 3,
+  "d": 256,
+  "layers": 4,
+  "enc_layers": 2,
+  "heads": 4,
+  "steps": 12000,
+  "batch": 256,
+  "lr": 0.0005,
+  "warmup": 200,
+  "kl_warmup": 0.3,
+  "beta": 1.0,
+  "free_bits": 0.65,
+  "tag": "fb0.65",
+  "sample_steps": [
+   1,
+   2,
+   4,
+   8,
+   16,
+   32,
+   64
+  ],
+  "n_samples": 1000,
+  "eval_n": 2000,
+  "log_every": 500,
+  "seed": 0,
+  "data_seed": 0
+ },
+ "refs": {
+  "markov": {
+   "true data": {
+    "valid": 1.0,
+    "local_valid": 1.0,
+    "nll_per_tok": 1.0098336935043335,
+    "modes_covered": 16,
+    "coverage_entropy": 0.9987137317657471
+   },
+   "independent marginals": {
+    "valid": 0.0,
+    "local_valid": 0.2135806381702423,
+    "nll_per_tok": 10.393329620361328,
+    "modes_covered": 0,
+    "coverage_entropy": 0.0
+   }
+  }
+ },
+ "results": [
+  {
+   "data": "markov",
+   "bits": 0,
+   "tag": "elbo",
+   "beta": 1.0,
+   "free_bits": 0.0,
+   "train_sec": 417.97369861602783,
+   "elbo_per_tok": 1.0822434723377228,
+   "kl_nats": 0.0,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": 0.21941936016082764,
+     "nll_per_tok": 10.368379592895508,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0,
+     "local_valid": 0.532677412033081,
+     "nll_per_tok": 9.509909629821777,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "4": {
+     "valid": 0.0,
+     "local_valid": 0.7092903256416321,
+     "nll_per_tok": 7.735630035400391,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "8": {
+     "valid": 0.003000000026077032,
+     "local_valid": 0.8330322504043579,
+     "nll_per_tok": 5.125047206878662,
+     "modes_covered": 3,
+     "coverage_entropy": 0.39624062180519104
+    },
+    "16": {
+     "valid": 0.06599999964237213,
+     "local_valid": 0.9089677333831787,
+     "nll_per_tok": 3.01328706741333,
+     "modes_covered": 15,
+     "coverage_entropy": 0.940034031867981
+    },
+    "32": {
+     "valid": 0.17900000512599945,
+     "local_valid": 0.9430645108222961,
+     "nll_per_tok": 2.162731409072876,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9672333598136902
+    },
+    "64": {
+     "valid": 0.2800000011920929,
+     "local_valid": 0.960451602935791,
+     "nll_per_tok": 1.7348463535308838,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9743760228157043
+    }
+   }
+  },
+  {
+   "data": "markov",
+   "bits": 4,
+   "tag": "fb0.65",
+   "beta": 1.0,
+   "free_bits": 0.65,
+   "train_sec": 515.1105065345764,
+   "elbo_per_tok": 1.0617216154932976,
+   "kl_nats": 2.553814172744751,
+   "code_mode_info": 0.951869547367096,
+   "codes_used": 16,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": 0.4444838762283325,
+     "nll_per_tok": 7.816081523895264,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0,
+     "local_valid": 0.726322591304779,
+     "nll_per_tok": 4.6977925300598145,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "4": {
+     "valid": 0.007000000216066837,
+     "local_valid": 0.8572258353233337,
+     "nll_per_tok": 3.1400907039642334,
+     "modes_covered": 4,
+     "coverage_entropy": 0.46059274673461914
+    },
+    "8": {
+     "valid": 0.07199999690055847,
+     "local_valid": 0.9204838871955872,
+     "nll_per_tok": 2.2624971866607666,
+     "modes_covered": 14,
+     "coverage_entropy": 0.9041333198547363
+    },
+    "16": {
+     "valid": 0.16699999570846558,
+     "local_valid": 0.9536451697349548,
+     "nll_per_tok": 1.7336143255233765,
+     "modes_covered": 16,
+     "coverage_entropy": 0.977896511554718
+    },
+    "32": {
+     "valid": 0.33500000834465027,
+     "local_valid": 0.9693871140480042,
+     "nll_per_tok": 1.5215216875076294,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9799071550369263
+    },
+    "64": {
+     "valid": 0.4519999921321869,
+     "local_valid": 0.977419376373291,
+     "nll_per_tok": 1.387831211090088,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9786562919616699
+    }
+   }
+  }
+ ]
+}

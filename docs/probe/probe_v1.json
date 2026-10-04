@@ -1,0 +1,1129 @@
+{
+ "args": {
+  "out": "/content/drive/MyDrive/calgd/probe_v1",
+  "data": [
+   "bag"
+  ],
+  "bits": [
+   4
+  ],
+  "vocab": 64,
+  "seq_len": 32,
+  "modes": 16,
+  "subset": 12,
+  "n_succ": 3,
+  "d": 256,
+  "layers": 4,
+  "enc_layers": 2,
+  "heads": 4,
+  "steps": 4000,
+  "batch": 256,
+  "lr": 0.0005,
+  "warmup": 200,
+  "kl_warmup": 0.3,
+  "beta": 0.1,
+  "free_bits": 0.0,
+  "tag": "beta0.1",
+  "sample_steps": [
+   1,
+   2,
+   4,
+   8,
+   16,
+   32,
+   64
+  ],
+  "n_samples": 1000,
+  "eval_n": 2000,
+  "log_every": 500,
+  "seed": 0,
+  "data_seed": 0
+ },
+ "refs": {
+  "bag": {
+   "true data": {
+    "valid": 1.0,
+    "local_valid": null,
+    "nll_per_tok": 2.2165653705596924,
+    "modes_covered": 16,
+    "coverage_entropy": 0.9987137317657471
+   },
+   "independent marginals": {
+    "valid": 0.0,
+    "local_valid": null,
+    "nll_per_tok": 7.748128414154053,
+    "modes_covered": 0,
+    "coverage_entropy": 0.0
+   }
+  }
+ },
+ "results": [
+  {
+   "data": "bag",
+   "bits": 0,
+   "tag": "elbo",
+   "beta": 1.0,
+   "free_bits": 0.0,
+   "train_sec": 54.64475703239441,
+   "elbo_per_tok": 2.23581326007843,
+   "kl_nats": 0.0,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": null,
+     "nll_per_tok": 7.88475227355957,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0,
+     "local_valid": null,
+     "nll_per_tok": 5.402926921844482,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "4": {
+     "valid": 0.006000000052154064,
+     "local_valid": null,
+     "nll_per_tok": 3.7440059185028076,
+     "modes_covered": 6,
+     "coverage_entropy": 0.6462407112121582
+    },
+    "8": {
+     "valid": 0.1289999932050705,
+     "local_valid": null,
+     "nll_per_tok": 2.9597437381744385,
+     "modes_covered": 15,
+     "coverage_entropy": 0.9380688071250916
+    },
+    "16": {
+     "valid": 0.3479999899864197,
+     "local_valid": null,
+     "nll_per_tok": 2.586749315261841,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9635903239250183
+    },
+    "32": {
+     "valid": 0.5600000023841858,
+     "local_valid": null,
+     "nll_per_tok": 2.4497580528259277,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9789648056030273
+    },
+    "64": {
+     "valid": 0.6970000267028809,
+     "local_valid": null,
+     "nll_per_tok": 2.3733696937561035,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9604515433311462
+    }
+   }
+  },
+  {
+   "data": "bag",
+   "bits": 2,
+   "tag": "elbo",
+   "beta": 1.0,
+   "free_bits": 0.0,
+   "train_sec": 81.33278155326843,
+   "elbo_per_tok": 2.2188140123907942,
+   "kl_nats": 0.01203527394682169,
+   "code_mode_info": 0.36640769243240356,
+   "codes_used": 4,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": null,
+     "nll_per_tok": 7.56824254989624,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0,
+     "local_valid": null,
+     "nll_per_tok": 5.167969703674316,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "4": {
+     "valid": 0.013000000268220901,
+     "local_valid": null,
+     "nll_per_tok": 3.723975658416748,
+     "modes_covered": 10,
+     "coverage_entropy": 0.795208215713501
+    },
+    "8": {
+     "valid": 0.10400000214576721,
+     "local_valid": null,
+     "nll_per_tok": 2.971752882003784,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9321163892745972
+    },
+    "16": {
+     "valid": 0.36399999260902405,
+     "local_valid": null,
+     "nll_per_tok": 2.5879781246185303,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9619566798210144
+    },
+    "32": {
+     "valid": 0.5529999732971191,
+     "local_valid": null,
+     "nll_per_tok": 2.4413084983825684,
+     "modes_covered": 16,
+     "coverage_entropy": 0.965251088142395
+    },
+    "64": {
+     "valid": 0.6800000071525574,
+     "local_valid": null,
+     "nll_per_tok": 2.3592283725738525,
+     "modes_covered": 16,
+     "coverage_entropy": 0.971947193145752
+    }
+   }
+  },
+  {
+   "data": "bag",
+   "bits": 4,
+   "tag": "elbo",
+   "beta": 1.0,
+   "free_bits": 0.0,
+   "train_sec": 81.30959486961365,
+   "elbo_per_tok": 2.2231478965841234,
+   "kl_nats": 0.0349835604429245,
+   "code_mode_info": 0.629365861415863,
+   "codes_used": 16,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": null,
+     "nll_per_tok": 7.550806999206543,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0,
+     "local_valid": null,
+     "nll_per_tok": 5.204694747924805,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "4": {
+     "valid": 0.014999999664723873,
+     "local_valid": null,
+     "nll_per_tok": 3.7359299659729004,
+     "modes_covered": 10,
+     "coverage_entropy": 0.7767227292060852
+    },
+    "8": {
+     "valid": 0.1080000028014183,
+     "local_valid": null,
+     "nll_per_tok": 2.9526970386505127,
+     "modes_covered": 15,
+     "coverage_entropy": 0.901103675365448
+    },
+    "16": {
+     "valid": 0.36800000071525574,
+     "local_valid": null,
+     "nll_per_tok": 2.5621137619018555,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9526902437210083
+    },
+    "32": {
+     "valid": 0.5699999928474426,
+     "local_valid": null,
+     "nll_per_tok": 2.437769889831543,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9631482362747192
+    },
+    "64": {
+     "valid": 0.7089999914169312,
+     "local_valid": null,
+     "nll_per_tok": 2.350940465927124,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9645974636077881
+    }
+   }
+  },
+  {
+   "data": "bag",
+   "bits": 8,
+   "tag": "elbo",
+   "beta": 1.0,
+   "free_bits": 0.0,
+   "train_sec": 81.35358715057373,
+   "elbo_per_tok": 2.2209674647892825,
+   "kl_nats": 0.020068904384970665,
+   "code_mode_info": 0.899285078048706,
+   "codes_used": 176,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": null,
+     "nll_per_tok": 7.560197353363037,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0,
+     "local_valid": null,
+     "nll_per_tok": 5.377467155456543,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "4": {
+     "valid": 0.014000000432133675,
+     "local_valid": null,
+     "nll_per_tok": 3.7706356048583984,
+     "modes_covered": 10,
+     "coverage_entropy": 0.808981716632843
+    },
+    "8": {
+     "valid": 0.1080000028014183,
+     "local_valid": null,
+     "nll_per_tok": 2.9615180492401123,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9241253733634949
+    },
+    "16": {
+     "valid": 0.37700000405311584,
+     "local_valid": null,
+     "nll_per_tok": 2.575622320175171,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9650489687919617
+    },
+    "32": {
+     "valid": 0.5569999814033508,
+     "local_valid": null,
+     "nll_per_tok": 2.435736894607544,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9613786339759827
+    },
+    "64": {
+     "valid": 0.7129999995231628,
+     "local_valid": null,
+     "nll_per_tok": 2.3546411991119385,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9762875437736511
+    }
+   }
+  },
+  {
+   "data": "markov",
+   "bits": 0,
+   "tag": "elbo",
+   "beta": 1.0,
+   "free_bits": 0.0,
+   "train_sec": 138.16345643997192,
+   "elbo_per_tok": 1.1895124465227127,
+   "kl_nats": 0.0,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": 0.21935483813285828,
+     "nll_per_tok": 10.36721134185791,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0,
+     "local_valid": 0.49577417969703674,
+     "nll_per_tok": 9.580403327941895,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "4": {
+     "valid": 0.0,
+     "local_valid": 0.663451611995697,
+     "nll_per_tok": 7.831075191497803,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "8": {
+     "valid": 0.004999999888241291,
+     "local_valid": 0.7895161509513855,
+     "nll_per_tok": 5.414961338043213,
+     "modes_covered": 2,
+     "coverage_entropy": 0.24273765087127686
+    },
+    "16": {
+     "valid": 0.01600000075995922,
+     "local_valid": 0.8619032502174377,
+     "nll_per_tok": 3.578840494155884,
+     "modes_covered": 9,
+     "coverage_entropy": 0.75
+    },
+    "32": {
+     "valid": 0.03400000184774399,
+     "local_valid": 0.8993225693702698,
+     "nll_per_tok": 2.7731640338897705,
+     "modes_covered": 14,
+     "coverage_entropy": 0.8479778170585632
+    },
+    "64": {
+     "valid": 0.04600000008940697,
+     "local_valid": 0.9179354906082153,
+     "nll_per_tok": 2.3237574100494385,
+     "modes_covered": 14,
+     "coverage_entropy": 0.8440274000167847
+    }
+   }
+  },
+  {
+   "data": "markov",
+   "bits": 2,
+   "tag": "elbo",
+   "beta": 1.0,
+   "free_bits": 0.0,
+   "train_sec": 168.36630201339722,
+   "elbo_per_tok": 1.2048931601457298,
+   "kl_nats": 0.03167448937892914,
+   "code_mode_info": 0.3442523777484894,
+   "codes_used": 4,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": 0.2290000021457672,
+     "nll_per_tok": 10.335803031921387,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0,
+     "local_valid": 0.4921613037586212,
+     "nll_per_tok": 9.514324188232422,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "4": {
+     "valid": 0.0,
+     "local_valid": 0.6604515910148621,
+     "nll_per_tok": 7.9201507568359375,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "8": {
+     "valid": 0.0020000000949949026,
+     "local_valid": 0.7818387150764465,
+     "nll_per_tok": 5.483755588531494,
+     "modes_covered": 2,
+     "coverage_entropy": 0.25
+    },
+    "16": {
+     "valid": 0.010999999940395355,
+     "local_valid": 0.8538709878921509,
+     "nll_per_tok": 3.793184280395508,
+     "modes_covered": 7,
+     "coverage_entropy": 0.6658831834793091
+    },
+    "32": {
+     "valid": 0.01600000075995922,
+     "local_valid": 0.8907096982002258,
+     "nll_per_tok": 2.8783435821533203,
+     "modes_covered": 8,
+     "coverage_entropy": 0.6818042397499084
+    },
+    "64": {
+     "valid": 0.03999999910593033,
+     "local_valid": 0.906000018119812,
+     "nll_per_tok": 2.4772768020629883,
+     "modes_covered": 13,
+     "coverage_entropy": 0.8484855890274048
+    }
+   }
+  },
+  {
+   "data": "markov",
+   "bits": 4,
+   "tag": "elbo",
+   "beta": 1.0,
+   "free_bits": 0.0,
+   "train_sec": 166.579026222229,
+   "elbo_per_tok": 1.1834913799830247,
+   "kl_nats": 0.013455421663820744,
+   "code_mode_info": 0.6294166445732117,
+   "codes_used": 16,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": 0.22338709235191345,
+     "nll_per_tok": 10.35396671295166,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0,
+     "local_valid": 0.5087742209434509,
+     "nll_per_tok": 9.547401428222656,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "4": {
+     "valid": 0.0,
+     "local_valid": 0.6743548512458801,
+     "nll_per_tok": 8.025375366210938,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "8": {
+     "valid": 0.0010000000474974513,
+     "local_valid": 0.7927419543266296,
+     "nll_per_tok": 5.471799850463867,
+     "modes_covered": 1,
+     "coverage_entropy": -0.0
+    },
+    "16": {
+     "valid": 0.009999999776482582,
+     "local_valid": 0.8615483641624451,
+     "nll_per_tok": 3.794729471206665,
+     "modes_covered": 4,
+     "coverage_entropy": 0.4616098701953888
+    },
+    "32": {
+     "valid": 0.03099999949336052,
+     "local_valid": 0.900225818157196,
+     "nll_per_tok": 2.773094892501831,
+     "modes_covered": 10,
+     "coverage_entropy": 0.7129590511322021
+    },
+    "64": {
+     "valid": 0.04800000041723251,
+     "local_valid": 0.9185484051704407,
+     "nll_per_tok": 2.3513832092285156,
+     "modes_covered": 13,
+     "coverage_entropy": 0.7791694402694702
+    }
+   }
+  },
+  {
+   "data": "markov",
+   "bits": 8,
+   "tag": "elbo",
+   "beta": 1.0,
+   "free_bits": 0.0,
+   "train_sec": 166.87135934829712,
+   "elbo_per_tok": 1.2110143120517023,
+   "kl_nats": 0.014963040128350258,
+   "code_mode_info": 0.8275786638259888,
+   "codes_used": 182,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": 0.22038710117340088,
+     "nll_per_tok": 10.360190391540527,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0,
+     "local_valid": 0.48764514923095703,
+     "nll_per_tok": 9.46826171875,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "4": {
+     "valid": 0.0,
+     "local_valid": 0.6610967516899109,
+     "nll_per_tok": 7.696385860443115,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "8": {
+     "valid": 0.0,
+     "local_valid": 0.7786129117012024,
+     "nll_per_tok": 5.240721702575684,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "16": {
+     "valid": 0.009999999776482582,
+     "local_valid": 0.849419355392456,
+     "nll_per_tok": 3.7292940616607666,
+     "modes_covered": 6,
+     "coverage_entropy": 0.5927376747131348
+    },
+    "32": {
+     "valid": 0.02199999988079071,
+     "local_valid": 0.8859354853630066,
+     "nll_per_tok": 2.85196590423584,
+     "modes_covered": 10,
+     "coverage_entropy": 0.769806444644928
+    },
+    "64": {
+     "valid": 0.02500000037252903,
+     "local_valid": 0.906129002571106,
+     "nll_per_tok": 2.477738857269287,
+     "modes_covered": 12,
+     "coverage_entropy": 0.7946722507476807
+    }
+   }
+  },
+  {
+   "data": "bag",
+   "bits": 2,
+   "tag": "fb0.5",
+   "beta": 1.0,
+   "free_bits": 0.5,
+   "train_sec": 84.63960075378418,
+   "elbo_per_tok": 2.2182896211743355,
+   "kl_nats": 0.9789097309112549,
+   "code_mode_info": 0.4670073688030243,
+   "codes_used": 4,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": null,
+     "nll_per_tok": 6.646932601928711,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0010000000474974513,
+     "local_valid": null,
+     "nll_per_tok": 4.8423237800598145,
+     "modes_covered": 1,
+     "coverage_entropy": -0.0
+    },
+    "4": {
+     "valid": 0.02199999988079071,
+     "local_valid": null,
+     "nll_per_tok": 3.5252299308776855,
+     "modes_covered": 9,
+     "coverage_entropy": 0.6647483706474304
+    },
+    "8": {
+     "valid": 0.164000004529953,
+     "local_valid": null,
+     "nll_per_tok": 2.883441686630249,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9489664435386658
+    },
+    "16": {
+     "valid": 0.41600000858306885,
+     "local_valid": null,
+     "nll_per_tok": 2.5166585445404053,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9600282311439514
+    },
+    "32": {
+     "valid": 0.625,
+     "local_valid": null,
+     "nll_per_tok": 2.4017295837402344,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9704184532165527
+    },
+    "64": {
+     "valid": 0.7390000224113464,
+     "local_valid": null,
+     "nll_per_tok": 2.3272621631622314,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9749369621276855
+    }
+   }
+  },
+  {
+   "data": "bag",
+   "bits": 4,
+   "tag": "fb0.5",
+   "beta": 1.0,
+   "free_bits": 0.5,
+   "train_sec": 86.83804607391357,
+   "elbo_per_tok": 2.2157871946692467,
+   "kl_nats": 1.9599168300628662,
+   "code_mode_info": 0.958889901638031,
+   "codes_used": 16,
+   "by_steps": {
+    "1": {
+     "valid": 0.013000000268220901,
+     "local_valid": null,
+     "nll_per_tok": 4.058868885040283,
+     "modes_covered": 6,
+     "coverage_entropy": 0.5883834958076477
+    },
+    "2": {
+     "valid": 0.0860000029206276,
+     "local_valid": null,
+     "nll_per_tok": 3.357417106628418,
+     "modes_covered": 14,
+     "coverage_entropy": 0.8202628493309021
+    },
+    "4": {
+     "valid": 0.23800000548362732,
+     "local_valid": null,
+     "nll_per_tok": 2.840775966644287,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9299467206001282
+    },
+    "8": {
+     "valid": 0.4090000092983246,
+     "local_valid": null,
+     "nll_per_tok": 2.585875988006592,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9594066739082336
+    },
+    "16": {
+     "valid": 0.6290000081062317,
+     "local_valid": null,
+     "nll_per_tok": 2.401808977127075,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9823399782180786
+    },
+    "32": {
+     "valid": 0.7210000157356262,
+     "local_valid": null,
+     "nll_per_tok": 2.3525028228759766,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9867321252822876
+    },
+    "64": {
+     "valid": 0.796999990940094,
+     "local_valid": null,
+     "nll_per_tok": 2.314646005630493,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9930835366249084
+    }
+   }
+  },
+  {
+   "data": "bag",
+   "bits": 8,
+   "tag": "fb0.5",
+   "beta": 1.0,
+   "free_bits": 0.5,
+   "train_sec": 86.34177374839783,
+   "elbo_per_tok": 2.246422253549099,
+   "kl_nats": 3.8408238887786865,
+   "code_mode_info": 0.999394416809082,
+   "codes_used": 110,
+   "by_steps": {
+    "1": {
+     "valid": 0.2639999985694885,
+     "local_valid": null,
+     "nll_per_tok": 3.696894645690918,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9344642758369446
+    },
+    "2": {
+     "valid": 0.35100001096725464,
+     "local_valid": null,
+     "nll_per_tok": 3.0982139110565186,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9264752864837646
+    },
+    "4": {
+     "valid": 0.4359999895095825,
+     "local_valid": null,
+     "nll_per_tok": 2.6918563842773438,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9546492695808411
+    },
+    "8": {
+     "valid": 0.574999988079071,
+     "local_valid": null,
+     "nll_per_tok": 2.499290704727173,
+     "modes_covered": 16,
+     "coverage_entropy": 0.955029308795929
+    },
+    "16": {
+     "valid": 0.7160000205039978,
+     "local_valid": null,
+     "nll_per_tok": 2.3613994121551514,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9746201634407043
+    },
+    "32": {
+     "valid": 0.746999979019165,
+     "local_valid": null,
+     "nll_per_tok": 2.34621000289917,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9771233797073364
+    },
+    "64": {
+     "valid": 0.7940000295639038,
+     "local_valid": null,
+     "nll_per_tok": 2.311223030090332,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9671741127967834
+    }
+   }
+  },
+  {
+   "data": "markov",
+   "bits": 2,
+   "tag": "fb0.5",
+   "beta": 1.0,
+   "free_bits": 0.5,
+   "train_sec": 176.39047384262085,
+   "elbo_per_tok": 1.1929215993732214,
+   "kl_nats": 0.9865004420280457,
+   "code_mode_info": 0.45704567432403564,
+   "codes_used": 4,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": 0.2822580635547638,
+     "nll_per_tok": 9.979000091552734,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0,
+     "local_valid": 0.5339354872703552,
+     "nll_per_tok": 8.60982608795166,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "4": {
+     "valid": 0.0,
+     "local_valid": 0.6869677305221558,
+     "nll_per_tok": 6.789363384246826,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "8": {
+     "valid": 0.0010000000474974513,
+     "local_valid": 0.7974838614463806,
+     "nll_per_tok": 4.705365180969238,
+     "modes_covered": 1,
+     "coverage_entropy": -0.0
+    },
+    "16": {
+     "valid": 0.006000000052154064,
+     "local_valid": 0.8632580637931824,
+     "nll_per_tok": 3.3717756271362305,
+     "modes_covered": 4,
+     "coverage_entropy": 0.4481203258037567
+    },
+    "32": {
+     "valid": 0.017000000923871994,
+     "local_valid": 0.8952903151512146,
+     "nll_per_tok": 2.710458278656006,
+     "modes_covered": 9,
+     "coverage_entropy": 0.7334886193275452
+    },
+    "64": {
+     "valid": 0.04100000113248825,
+     "local_valid": 0.9128386974334717,
+     "nll_per_tok": 2.3347909450531006,
+     "modes_covered": 10,
+     "coverage_entropy": 0.7239329218864441
+    }
+   }
+  },
+  {
+   "data": "markov",
+   "bits": 4,
+   "tag": "fb0.5",
+   "beta": 1.0,
+   "free_bits": 0.5,
+   "train_sec": 174.0907814502716,
+   "elbo_per_tok": 1.1663473658263683,
+   "kl_nats": 1.9452913999557495,
+   "code_mode_info": 0.9568282961845398,
+   "codes_used": 15,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": 0.3928709626197815,
+     "nll_per_tok": 8.557683944702148,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0,
+     "local_valid": 0.6517419219017029,
+     "nll_per_tok": 6.22401762008667,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "4": {
+     "valid": 0.0010000000474974513,
+     "local_valid": 0.789612889289856,
+     "nll_per_tok": 4.4836602210998535,
+     "modes_covered": 1,
+     "coverage_entropy": -0.0
+    },
+    "8": {
+     "valid": 0.01899999938905239,
+     "local_valid": 0.8587741851806641,
+     "nll_per_tok": 3.433530807495117,
+     "modes_covered": 7,
+     "coverage_entropy": 0.46961936354637146
+    },
+    "16": {
+     "valid": 0.03500000014901161,
+     "local_valid": 0.9011613130569458,
+     "nll_per_tok": 2.571981906890869,
+     "modes_covered": 10,
+     "coverage_entropy": 0.7536545395851135
+    },
+    "32": {
+     "valid": 0.06300000101327896,
+     "local_valid": 0.9237096905708313,
+     "nll_per_tok": 2.240414619445801,
+     "modes_covered": 14,
+     "coverage_entropy": 0.833425760269165
+    },
+    "64": {
+     "valid": 0.09000000357627869,
+     "local_valid": 0.9330967664718628,
+     "nll_per_tok": 2.0180370807647705,
+     "modes_covered": 15,
+     "coverage_entropy": 0.8273449540138245
+    }
+   }
+  },
+  {
+   "data": "markov",
+   "bits": 8,
+   "tag": "fb0.5",
+   "beta": 1.0,
+   "free_bits": 0.5,
+   "train_sec": 172.67594695091248,
+   "elbo_per_tok": 1.21811493486166,
+   "kl_nats": 3.8587582111358643,
+   "code_mode_info": 0.9999999403953552,
+   "codes_used": 109,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": 0.4277096688747406,
+     "nll_per_tok": 8.241382598876953,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0,
+     "local_valid": 0.661774218082428,
+     "nll_per_tok": 6.0188751220703125,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "4": {
+     "valid": 0.0020000000949949026,
+     "local_valid": 0.788741946220398,
+     "nll_per_tok": 4.512314796447754,
+     "modes_covered": 2,
+     "coverage_entropy": 0.25
+    },
+    "8": {
+     "valid": 0.00800000037997961,
+     "local_valid": 0.8548709750175476,
+     "nll_per_tok": 3.416292667388916,
+     "modes_covered": 4,
+     "coverage_entropy": 0.4764097332954407
+    },
+    "16": {
+     "valid": 0.02500000037252903,
+     "local_valid": 0.8928064703941345,
+     "nll_per_tok": 2.740394115447998,
+     "modes_covered": 10,
+     "coverage_entropy": 0.7934151887893677
+    },
+    "32": {
+     "valid": 0.03700000047683716,
+     "local_valid": 0.9105806350708008,
+     "nll_per_tok": 2.4466066360473633,
+     "modes_covered": 8,
+     "coverage_entropy": 0.6830068826675415
+    },
+    "64": {
+     "valid": 0.057999998331069946,
+     "local_valid": 0.9193871021270752,
+     "nll_per_tok": 2.2742068767547607,
+     "modes_covered": 10,
+     "coverage_entropy": 0.7245728969573975
+    }
+   }
+  },
+  {
+   "data": "bag",
+   "bits": 4,
+   "tag": "fb0.65",
+   "beta": 1.0,
+   "free_bits": 0.65,
+   "train_sec": 82.39558792114258,
+   "elbo_per_tok": 2.222067065536976,
+   "kl_nats": 2.5014584064483643,
+   "code_mode_info": 0.8915148973464966,
+   "codes_used": 15,
+   "by_steps": {
+    "1": {
+     "valid": 0.3319999873638153,
+     "local_valid": null,
+     "nll_per_tok": 3.395033597946167,
+     "modes_covered": 10,
+     "coverage_entropy": 0.7574195265769958
+    },
+    "2": {
+     "valid": 0.4359999895095825,
+     "local_valid": null,
+     "nll_per_tok": 2.840261220932007,
+     "modes_covered": 11,
+     "coverage_entropy": 0.7878069281578064
+    },
+    "4": {
+     "valid": 0.503000020980835,
+     "local_valid": null,
+     "nll_per_tok": 2.596395492553711,
+     "modes_covered": 15,
+     "coverage_entropy": 0.8425688743591309
+    },
+    "8": {
+     "valid": 0.5979999899864197,
+     "local_valid": null,
+     "nll_per_tok": 2.4475650787353516,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9264939427375793
+    },
+    "16": {
+     "valid": 0.7620000243186951,
+     "local_valid": null,
+     "nll_per_tok": 2.322598457336426,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9422542452812195
+    },
+    "32": {
+     "valid": 0.8119999766349792,
+     "local_valid": null,
+     "nll_per_tok": 2.311767816543579,
+     "modes_covered": 16,
+     "coverage_entropy": 0.942518949508667
+    },
+    "64": {
+     "valid": 0.8360000252723694,
+     "local_valid": null,
+     "nll_per_tok": 2.293252944946289,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9684643745422363
+    }
+   }
+  },
+  {
+   "data": "bag",
+   "bits": 8,
+   "tag": "fb0.65",
+   "beta": 1.0,
+   "free_bits": 0.65,
+   "train_sec": 81.75534749031067,
+   "elbo_per_tok": 2.275504007935524,
+   "kl_nats": 5.033936977386475,
+   "code_mode_info": 1.0000001192092896,
+   "codes_used": 67,
+   "by_steps": {
+    "1": {
+     "valid": 0.4339999854564667,
+     "local_valid": null,
+     "nll_per_tok": 3.442352294921875,
+     "modes_covered": 16,
+     "coverage_entropy": 0.8789331316947937
+    },
+    "2": {
+     "valid": 0.5040000081062317,
+     "local_valid": null,
+     "nll_per_tok": 2.9632885456085205,
+     "modes_covered": 16,
+     "coverage_entropy": 0.8793274164199829
+    },
+    "4": {
+     "valid": 0.5649999976158142,
+     "local_valid": null,
+     "nll_per_tok": 2.7029778957366943,
+     "modes_covered": 16,
+     "coverage_entropy": 0.900747537612915
+    },
+    "8": {
+     "valid": 0.6380000114440918,
+     "local_valid": null,
+     "nll_per_tok": 2.5158023834228516,
+     "modes_covered": 16,
+     "coverage_entropy": 0.8867393732070923
+    },
+    "16": {
+     "valid": 0.722000002861023,
+     "local_valid": null,
+     "nll_per_tok": 2.4180052280426025,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9247403144836426
+    },
+    "32": {
+     "valid": 0.7590000033378601,
+     "local_valid": null,
+     "nll_per_tok": 2.411012887954712,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9068096280097961
+    },
+    "64": {
+     "valid": 0.7720000147819519,
+     "local_valid": null,
+     "nll_per_tok": 2.3925840854644775,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9122812151908875
+    }
+   }
+  },
+  {
+   "data": "bag",
+   "bits": 4,
+   "tag": "beta0.1",
+   "beta": 0.1,
+   "free_bits": 0.0,
+   "train_sec": 82.34503746032715,
+   "elbo_per_tok": 2.2220142781734467,
+   "kl_nats": 2.754791259765625,
+   "code_mode_info": 0.8665187954902649,
+   "codes_used": 15,
+   "by_steps": {
+    "1": {
+     "valid": 0.5540000200271606,
+     "local_valid": null,
+     "nll_per_tok": 2.9113481044769287,
+     "modes_covered": 10,
+     "coverage_entropy": 0.755673348903656
+    },
+    "2": {
+     "valid": 0.6060000061988831,
+     "local_valid": null,
+     "nll_per_tok": 2.586412191390991,
+     "modes_covered": 11,
+     "coverage_entropy": 0.7796216011047363
+    },
+    "4": {
+     "valid": 0.6660000085830688,
+     "local_valid": null,
+     "nll_per_tok": 2.4150633811950684,
+     "modes_covered": 15,
+     "coverage_entropy": 0.8315454721450806
+    },
+    "8": {
+     "valid": 0.7519999742507935,
+     "local_valid": null,
+     "nll_per_tok": 2.3174586296081543,
+     "modes_covered": 16,
+     "coverage_entropy": 0.8900830745697021
+    },
+    "16": {
+     "valid": 0.8299999833106995,
+     "local_valid": null,
+     "nll_per_tok": 2.252938747406006,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9001325964927673
+    },
+    "32": {
+     "valid": 0.8619999885559082,
+     "local_valid": null,
+     "nll_per_tok": 2.2471845149993896,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9144260883331299
+    },
+    "64": {
+     "valid": 0.8640000224113464,
+     "local_valid": null,
+     "nll_per_tok": 2.2468013763427734,
+     "modes_covered": 16,
+     "coverage_entropy": 0.935573160648346
+    }
+   }
+  }
+ ]
+}

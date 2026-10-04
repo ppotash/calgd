@@ -1,0 +1,186 @@
+{
+ "args": {
+  "out": "/content/drive/MyDrive/calgd/probe_seed1",
+  "data": [
+   "bag"
+  ],
+  "bits": [
+   4
+  ],
+  "vocab": 64,
+  "seq_len": 32,
+  "modes": 16,
+  "subset": 12,
+  "n_succ": 3,
+  "d": 256,
+  "layers": 4,
+  "enc_layers": 2,
+  "heads": 4,
+  "steps": 4000,
+  "batch": 256,
+  "lr": 0.0005,
+  "warmup": 200,
+  "kl_warmup": 0.3,
+  "beta": 0.1,
+  "free_bits": 0.0,
+  "tag": "beta0.1",
+  "sample_steps": [
+   1,
+   2,
+   4,
+   8,
+   16,
+   32,
+   64
+  ],
+  "n_samples": 1000,
+  "eval_n": 2000,
+  "log_every": 500,
+  "seed": 1,
+  "data_seed": 1
+ },
+ "refs": {
+  "bag": {
+   "true data": {
+    "valid": 1.0,
+    "local_valid": null,
+    "nll_per_tok": 2.118304491043091,
+    "modes_covered": 16,
+    "coverage_entropy": 0.9987137317657471
+   },
+   "independent marginals": {
+    "valid": 0.0,
+    "local_valid": null,
+    "nll_per_tok": 7.960752010345459,
+    "modes_covered": 0,
+    "coverage_entropy": 0.0
+   }
+  }
+ },
+ "results": [
+  {
+   "data": "bag",
+   "bits": 0,
+   "tag": "elbo",
+   "beta": 1.0,
+   "free_bits": 0.0,
+   "train_sec": 54.32704734802246,
+   "elbo_per_tok": 2.1497913599014282,
+   "kl_nats": 0.0,
+   "by_steps": {
+    "1": {
+     "valid": 0.0,
+     "local_valid": null,
+     "nll_per_tok": 7.8442230224609375,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "2": {
+     "valid": 0.0,
+     "local_valid": null,
+     "nll_per_tok": 5.461810111999512,
+     "modes_covered": 0,
+     "coverage_entropy": 0.0
+    },
+    "4": {
+     "valid": 0.014000000432133675,
+     "local_valid": null,
+     "nll_per_tok": 3.694398880004883,
+     "modes_covered": 8,
+     "coverage_entropy": 0.7105927467346191
+    },
+    "8": {
+     "valid": 0.11800000071525574,
+     "local_valid": null,
+     "nll_per_tok": 2.85892391204834,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9377055764198303
+    },
+    "16": {
+     "valid": 0.3540000021457672,
+     "local_valid": null,
+     "nll_per_tok": 2.4755001068115234,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9670720100402832
+    },
+    "32": {
+     "valid": 0.5730000138282776,
+     "local_valid": null,
+     "nll_per_tok": 2.280212163925171,
+     "modes_covered": 16,
+     "coverage_entropy": 0.971351146697998
+    },
+    "64": {
+     "valid": 0.7329999804496765,
+     "local_valid": null,
+     "nll_per_tok": 2.209183931350708,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9712462425231934
+    }
+   }
+  },
+  {
+   "data": "bag",
+   "bits": 4,
+   "tag": "beta0.1",
+   "beta": 0.1,
+   "free_bits": 0.0,
+   "train_sec": 82.44760966300964,
+   "elbo_per_tok": 2.1289694532752037,
+   "kl_nats": 2.7715890407562256,
+   "code_mode_info": 0.9692239165306091,
+   "codes_used": 15,
+   "by_steps": {
+    "1": {
+     "valid": 0.7979999780654907,
+     "local_valid": null,
+     "nll_per_tok": 2.2905080318450928,
+     "modes_covered": 14,
+     "coverage_entropy": 0.949361264705658
+    },
+    "2": {
+     "valid": 0.8270000219345093,
+     "local_valid": null,
+     "nll_per_tok": 2.2179956436157227,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9527768492698669
+    },
+    "4": {
+     "valid": 0.8410000205039978,
+     "local_valid": null,
+     "nll_per_tok": 2.197227716445923,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9741910696029663
+    },
+    "8": {
+     "valid": 0.878000020980835,
+     "local_valid": null,
+     "nll_per_tok": 2.180237293243408,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9837868809700012
+    },
+    "16": {
+     "valid": 0.9139999747276306,
+     "local_valid": null,
+     "nll_per_tok": 2.172724723815918,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9766297936439514
+    },
+    "32": {
+     "valid": 0.902999997138977,
+     "local_valid": null,
+     "nll_per_tok": 2.1661159992218018,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9838619828224182
+    },
+    "64": {
+     "valid": 0.9139999747276306,
+     "local_valid": null,
+     "nll_per_tok": 2.1778013706207275,
+     "modes_covered": 16,
+     "coverage_entropy": 0.9779314398765564
+    }
+   }
+  }
+ ]
+}
