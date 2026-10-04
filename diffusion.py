@@ -690,7 +690,10 @@ class Diffusion(L.LightningModule):
     elif order == 'revealer':
       # Learned information-gain scores, with the same annealed-noise knob.
       capture, head = self._aux_cache['revealer']
-      score = head(capture.hidden, revealer.token_features(log_p, t))
+      feats = revealer.token_features(log_p, t)
+      cand_prob = p_x0.gather(-1, cand.unsqueeze(-1)).squeeze(-1)
+      score = head(capture.hidden, feats,
+                   revealer.base_score(head.base, feats, cand_prob))
       temp = self.config.sampling.get('revealer_temp', 0.0)
       if temp > 0:
         score = score + temp * t[:, None].float() * _gumbel_like(score)

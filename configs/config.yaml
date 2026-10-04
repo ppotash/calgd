@@ -112,14 +112,21 @@ revealer:  # mode=revealer_label / revealer_train
   shard_size: 256  # labeled sequences per shard
   batch_size: 4  # sequences per labeling step
   k: 8  # candidates per sequence
+  n_samples: 4  # sampled reveals per candidate (averaging reduces label noise)
   chunk: 8  # counterfactual sequences per forward pass (lower if OOM)
   ground_truth: False  # reveal true tokens instead of sampled ones
   allow_tf32: True  # faster labeling on Ampere/Ada GPUs
   val_shards: 2  # first shards held out for validation
   head_path: null  # default: <label_dir>/revealer_head.pt
-  width: 256
-  epochs: 30
-  lr: 1e-3
+  target: sampled  # sampled: gain of the committed value; expected: mean over samples
+  base: cand  # null, cand (sampled-token prob) or maxp: head corrects this score
+  use_hidden: True  # False = features-only ablation
+  width: 128
+  dropout: 0.2
+  weight_decay: 0.05
+  epochs: 50
+  patience: 5  # early stopping on validation pair accuracy
+  lr: 3e-4
   train_batch: 256
   margin: 0.0
   seed: 0

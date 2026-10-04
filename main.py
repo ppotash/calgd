@@ -207,7 +207,8 @@ def revealer_label(config, logger, tokenizer):
       x0 = torch.tensor(batch, device=model.device)
       out = revealer.label_batch(
         model, capture, x0, eps=config.training.sampling_eps, k=rc.k,
-        use_ground_truth=rc.ground_truth, chunk=rc.chunk)
+        use_ground_truth=rc.ground_truth, chunk=rc.chunk,
+        n_samples=rc.n_samples)
       if out is not None:
         recs.append(out)
         n_lab += out['gain'].shape[0]
@@ -222,64 +223,118 @@ def revealer_label(config, logger, tokenizer):
 
 
 def revealer_train(config, logger, tokenizer):
-  """Train the reveal head on labeled shards (no denoiser passes needed)."""
+  """Train the reveal head on labeled shards (no denoiser passes needed).
+
+  revealer.target: 'sampled' ranks candidates by the gain of the specific
+  sampled value (what the sampler will commit); 'expected' ranks by the gain
+  averaged over the stored samples. revealer.base: None, 'cand' or 'maxp' -
+  with a base the head learns a correction on top of that confidence score.
+  """
   import revealer
   rc = config.revealer
   files = revealer.shard_files(rc.label_dir)
   assert len(files) > rc.val_shards, (
     f'need more than {rc.val_shards} shards in {rc.label_dir}, '
     f'found {len(files)}')
-  val = revealer.load_shards(files[:rc.val_shards])
-  tr = revealer.load_shards(files[rc.val_shards:])
+  val_raw = revealer.load_shards(files[:rc.val_shards])
+  tr_raw = revealer.load_shards(files[rc.val_shards:])
+  if rc.target == 'expected':
+    assert rc.base in (None, 'maxp'), "target=expected supports base null/maxp"
   head_path = rc.head_path or os.path.join(rc.label_dir, 'revealer_head.pt')
   device = 'cuda' if torch.cuda.is_available() else 'cpu'
   torch.manual_seed(rc.seed)
-  logger.info(f"train {tr['gain'].shape[0]} seqs, val {val['gain'].shape[0]} "
-              f"seqs, k={tr['gain'].shape[1]}")
+  S, k, m = tr_raw['gain'].shape
+  logger.info(f"train {S} seqs, val {val_raw['gain'].shape[0]} seqs, k={k}, "
+              f"samples per candidate m={m}, target={rc.target}, "
+              f"base={rc.base}, use_hidden={rc.use_hidden}")
+  if m >= 2:
+    pair, r, r_full = revealer.label_reliability(
+      torch.cat([tr_raw['gain'], val_raw['gain']]))
+    logger.info(f'Label reliability: halves agree on {pair:.3f} of pairs; '
+                f'within-seq r={r:.3f} (half vs half), '
+                f'~{r_full:.3f} for the full {m}-sample average')
 
-  def report(name, score, data):
-    pair, top1 = revealer.ranking_metrics(score, data['gain'], rc.margin)
+  tr = revealer.group_view(tr_raw, rc.target)
+  val = revealer.group_view(val_raw, rc.target)
+  vfeats = val_raw['feats'][val['seq']]
+
+  def report(name, score):
+    pair, top1 = revealer.ranking_metrics(score, val['gain'], rc.margin)
     bins = []
     for lo, hi in [(0, 1 / 3), (1 / 3, 2 / 3), (2 / 3, 1.01)]:
-      sel = (data['t'] >= lo) & (data['t'] < hi)
+      sel = (val['t'] >= lo) & (val['t'] < hi)
       if sel.any():
         bins.append(revealer.ranking_metrics(
-          score[sel], data['gain'][sel], rc.margin)[0])
-    logger.info(f'{name:<26} pair acc {pair:.3f}  top-1 {top1:.3f}  '
-                f'pair acc by t [low/mid/high] '
-                + ' / '.join(f'{b:.3f}' for b in bins))
+          score[sel], val['gain'][sel], rc.margin)[0])
+    logger.info(f'{name:<30} pair acc {pair:.3f}  top-1 {top1:.3f}  '
+                f'by t [low/mid/high] ' + ' / '.join(f'{b:.3f}' for b in bins))
     return pair
 
   logger.info('Validation baselines (pair acc 0.5 and top-1 1/k = random):')
-  report('random', torch.rand_like(val['gain']), val)
-  report('confidence (sampled tok)', val['cand_prob'], val)
-  report('max prob', val['feats'][..., 1], val)
-  report('neg entropy', -val['feats'][..., 0], val)
+  report('random', torch.rand_like(val['gain']))
+  conf_name = ('confidence (sampled tok)' if rc.target == 'sampled'
+               else 'mean sampled-tok prob')
+  base_accs = {
+    conf_name: report(conf_name, val['cand_prob']),
+    'max prob': report('max prob', vfeats[..., 1]),
+    'neg entropy': report('neg entropy', -vfeats[..., 0])}
+  ref_name = conf_name if rc.base in (None, 'cand') else 'max prob'
+  ref_score = val['cand_prob'] if ref_name == conf_name else vfeats[..., 1]
 
-  head = revealer.RevealHead(tr['hidden'].shape[-1], width=rc.width).to(device)
-  opt = torch.optim.AdamW(head.parameters(), lr=rc.lr, weight_decay=0.01)
-  n, best = tr['gain'].shape[0], -1.0
-  for ep in range(rc.epochs):
+  head = revealer.RevealHead(
+    tr_raw['hidden'].shape[-1], width=rc.width, dropout=rc.dropout,
+    base=rc.base, use_hidden=rc.use_hidden).to(device)
+  opt = torch.optim.AdamW(head.parameters(), lr=rc.lr,
+                          weight_decay=rc.weight_decay)
+
+  def scores(view, raw, idx=None):
+    seq = view['seq'] if idx is None else view['seq'][idx]
+    cp = view['cand_prob'] if idx is None else view['cand_prob'][idx]
+    feats = raw['feats'][seq].to(device)
+    b = revealer.base_score(rc.base, feats, cp.to(device))
+    return head(raw['hidden'][seq].to(device), feats, b)
+
+  def evaluate():
+    head.eval()
+    with torch.no_grad():
+      return scores(val, val_raw).cpu()
+
+  vs = evaluate()
+  best = report('head epoch   0 (untrained)', vs)
+  best_scores, stale = vs, 0
+  head.save(head_path, extra={'epoch': 0, 'val_pair_acc': best})
+  G = tr['gain'].shape[0]
+  for ep in range(1, rc.epochs + 1):
     head.train()
-    perm, tot = torch.randperm(n), 0.0
-    for i in range(0, n, rc.train_batch):
+    perm, tot = torch.randperm(G), 0.0
+    for i in range(0, G, rc.train_batch):
       idx = perm[i:i + rc.train_batch]
-      score = head(tr['hidden'][idx].to(device), tr['feats'][idx].to(device))
       loss = revealer.pairwise_rank_loss(
-        score, tr['gain'][idx].to(device), rc.margin)
+        scores(tr, tr_raw, idx), tr['gain'][idx].to(device), rc.margin)
       opt.zero_grad()
       loss.backward()
       opt.step()
       tot += loss.item() * len(idx)
-    head.eval()
-    with torch.no_grad():
-      vs = head(val['hidden'].to(device), val['feats'].to(device)).cpu()
-    pair = report(f'head epoch {ep + 1:>3} (loss {tot / n:.3f})', vs, val)
+    vs = evaluate()
+    pair = report(f'head epoch {ep:>3} (loss {tot / G:.3f})', vs)
     if pair > best:
-      best = pair
-      head.save(head_path, extra={'epoch': ep + 1, 'val_pair_acc': pair,
-                                  'label_dir': rc.label_dir})
-  logger.info(f'Best val pair acc {best:.3f}; head saved to {head_path}')
+      best, best_scores, stale = pair, vs, 0
+      head.save(head_path, extra={'epoch': ep, 'val_pair_acc': pair,
+                                  'label_dir': rc.label_dir,
+                                  'target': rc.target})
+    else:
+      stale += 1
+      if stale >= rc.patience:
+        logger.info(f'Early stop: no improvement for {rc.patience} epochs.')
+        break
+
+  ch, nv = revealer.pair_counts(best_scores, val['gain'], rc.margin)
+  cr, _ = revealer.pair_counts(ref_score, val['gain'], rc.margin)
+  lo, hi = revealer.bootstrap_diff(ch, cr, nv, val['seq'])
+  ref_acc = (cr.sum() / nv.sum()).item()
+  logger.info(f'Best head pair acc {best:.3f} vs {ref_name} {ref_acc:.3f}: '
+              f'difference {best - ref_acc:+.3f} (95% CI {lo:+.3f} to {hi:+.3f}). '
+              f'Head saved to {head_path}')
 
 
 def _ppl_eval(config, logger, tokenizer):
