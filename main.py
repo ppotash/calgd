@@ -150,16 +150,20 @@ def sample_sweep(config, logger, tokenizer):
   for steps in config.sampling.sweep_steps:
     model.gen_ppl_metric.reset()
     texts, ents, secs = [], [], 0.0
+    zs, pres = [], []
     for _ in range(config.sampling.num_sample_batches):
       if adapter is not None and adapter.bits:
-        adapter.set_z(adapter.sample_prior(config.loader.eval_batch_size,
-                                           model.device))
+        z = adapter.sample_prior(config.loader.eval_batch_size, model.device)
+        adapter.set_z(z)
       torch.cuda.synchronize()
       t0 = time.time()
       samples = model.restore_model_and_sample(num_steps=steps)
       torch.cuda.synchronize()
       secs += time.time() - t0
       ents += diffusion.sample_entropy(samples)
+      if adapter is not None and adapter.oracle == 'presence':
+        zs.append(z.cpu())
+        pres.append(adapter.encoder.presence(samples.to(model.device)).float().cpu())
       batch_texts = model.tokenizer.batch_decode(samples)
       texts += batch_texts
       model.compute_generative_perplexity(batch_texts)
@@ -170,12 +174,21 @@ def sample_sweep(config, logger, tokenizer):
            'entropy_std': float(ent.std()) if len(ents) > 1 else 0.0,
            'sec_per_sample': secs / len(texts),
            'samples': texts}
+    if zs:   # do samples contain the oracle words iff their bit is on?
+      z_all, p_all = torch.cat(zs), torch.cat(pres)
+      rec['oracle_present_when_on'] = float(p_all[z_all == 1].mean())
+      rec['oracle_present_when_off'] = float(p_all[z_all == 0].mean())
+      rec['oracle_agreement'] = float((p_all == z_all).float().mean())
     results['settings'].append(rec)
     with open(out_path, 'w') as f:
       json.dump(results, f, indent=1)
     logger.info(f"steps={rec['steps']:4d}  gen_ppl={rec['gen_ppl']:8.2f}  "
                 f"entropy={rec['entropy_mean']:.3f}  "
-                f"sec/sample={rec['sec_per_sample']:.2f}")
+                f"sec/sample={rec['sec_per_sample']:.2f}"
+                + (f"  oracle word present: bit on {rec['oracle_present_when_on']:.2f}"
+                   f" / off {rec['oracle_present_when_off']:.2f}"
+                   f" (agreement {rec['oracle_agreement']:.2f}, chance 0.50)"
+                   if 'oracle_agreement' in rec else ''))
   print(f"\n{'steps':>6} {'gen_ppl':>9} {'entropy':>8} {'sec/sample':>11}")
   for r in results['settings']:
     print(f"{r['steps']:>6} {r['gen_ppl']:>9.2f} {r['entropy_mean']:>8.3f} "
@@ -381,7 +394,8 @@ def latent_finetune(config, logger, tokenizer):
     model.backbone, lc.bits, model.vocab_size, L, cond_dim,
     lc.enc_dim, lc.enc_layers, lc.enc_heads,
     input_inject=lc.get('input_inject', False),
-    head_std=lc.get('enc_head_std', 0.02)).to(device)
+    head_std=lc.get('enc_head_std', 0.02),
+    oracle=lc.get('oracle')).to(device)
   if lc.get('freeze_encoder', False) and lc.bits:
     for p in adapter.encoder.parameters():
       p.requires_grad_(False)
@@ -418,6 +432,18 @@ def latent_finetune(config, logger, tokenizer):
 
   val_stream = revealer.owt_chunks(model.tokenizer, L)
   val = torch.tensor([next(val_stream) for _ in range(lc.eval_seqs)])
+  if adapter.oracle == 'presence':
+    if step == 0:   # on resume the chosen tokens come from latest.pt
+      sel = torch.tensor([next(val_stream) for _ in range(lc.oracle_select_seqs)])
+      toks, dfs = latent.select_oracle_tokens(sel, model.tokenizer, lc.bits,
+                                              model.vocab_size)
+      adapter.encoder.tokens.copy_(toks.to(device))
+    toks = adapter.encoder.tokens.tolist()
+    words = [model.tokenizer.decode([v]) for v in toks]
+    present = adapter.encoder.presence(val.to(device)).float().mean(0).tolist()
+    logger.info('oracle bits = presence of: ' + ', '.join(
+      f'{w.strip()!r} ({p:.2f})' for w, p in zip(words, present))
+      + '  (held-out presence rate)')
   stream = revealer.owt_chunks(model.tokenizer, L, skip=consumed)
 
   def evaluate():

@@ -81,6 +81,44 @@ class SeqEncoder(nn.Module):
     return self.head(self.norm(self.body(h)).mean(1))
 
 
+class OracleEncoder(nn.Module):
+  """Fixed, interpretable bits: bit k = 1 iff token tokens[k] occurs anywhere in
+  the sequence. Returns saturated logits so z is deterministic. Used to test
+  whether the denoiser can use document-level information at all."""
+
+  def __init__(self, bits):
+    super().__init__()
+    self.register_buffer('tokens', torch.zeros(bits, dtype=torch.long))
+
+  def presence(self, x):
+    return (x.unsqueeze(-1) == self.tokens).any(1)                  # [B, K]
+
+  def forward(self, x0):
+    return self.presence(x0).float() * 40.0 - 20.0
+
+
+def select_oracle_tokens(chunks, tokenizer, k, vocab_size):
+  """k word tokens whose document frequency over `chunks` [N, L] is closest to
+  0.5 (most informative bits). Prefers plain words (' said', ' game', ...).
+  Returns (token ids, their document frequencies)."""
+  import re
+  df = torch.zeros(vocab_size)
+  for row in chunks:
+    df[torch.unique(row)] += 1
+  df /= len(chunks)
+  order = torch.argsort((df - 0.5).abs()).tolist()
+
+  def is_word(v):
+    try:
+      return re.fullmatch(r' [A-Za-z]{3,}', tokenizer.decode([v])) is not None
+    except Exception:
+      return True
+  chosen = [v for v in order if is_word(v)][:k]
+  if len(chosen) < k:   # fall back to any tokens if too few plain words
+    chosen += [v for v in order if v not in chosen][:k - len(chosen)]
+  return torch.tensor(chosen), df[chosen]
+
+
 def bernoulli_st(logits):
   p = torch.sigmoid(logits)
   hard = torch.bernoulli(p.detach())
@@ -98,16 +136,21 @@ class LatentAdapter(nn.Module):
 
   def __init__(self, backbone, bits, vocab_size, seq_len, cond_dim,
                enc_dim=256, enc_layers=2, enc_heads=4, input_inject=False,
-               head_std=0.02):
+               head_std=0.02, oracle=None):
     super().__init__()
     self.bits, self.cond_dim = bits, cond_dim
+    self.oracle = oracle if bits else None
     self.input_inject = bool(input_inject and bits)
     self.enc_cfg = dict(enc_dim=enc_dim, enc_layers=enc_layers,
                         enc_heads=enc_heads)
     emb = vocab_embedding(backbone, vocab_size)
-    if bits:
+    if bits and oracle == 'presence':
+      self.encoder = OracleEncoder(bits)
+    elif bits:
+      assert oracle is None, f'unknown oracle {oracle!r}'
       self.encoder = SeqEncoder(vocab_size, seq_len, bits, enc_dim, enc_layers,
                                 enc_heads, emb, head_std=head_std)
+    if bits:
       self.z_proj = nn.Linear(bits, cond_dim)
       nn.init.zeros_(self.z_proj.weight)
       nn.init.zeros_(self.z_proj.bias)
@@ -159,6 +202,7 @@ def save_checkpoint(path, adapter, backbone, extra):
   torch.save({
     'bits': adapter.bits, 'cond_dim': adapter.cond_dim,
     'enc_cfg': adapter.enc_cfg, 'input_inject': adapter.input_inject,
+    'oracle': adapter.oracle,
     'adapter': {k: v for k, v in adapter.state_dict().items()
                 if not k.endswith('encoder.emb')},   # frozen copy, rebuilt
     'adaln': {n: p.detach().cpu() for n, p in adaln_parameters(backbone)},
@@ -175,7 +219,8 @@ def load_into(model, path, seq_len):
       params[n].copy_(v.to(params[n].device, params[n].dtype))
   adapter = LatentAdapter(model.backbone, ck['bits'], model.vocab_size,
                           seq_len, ck['cond_dim'], **ck['enc_cfg'],
-                          input_inject=ck.get('input_inject', False))
+                          input_inject=ck.get('input_inject', False),
+                          oracle=ck.get('oracle'))
   missing, unexpected = adapter.load_state_dict(ck['adapter'], strict=False)
   assert not unexpected and all(k.endswith('encoder.emb') for k in missing), (
     missing, unexpected)
