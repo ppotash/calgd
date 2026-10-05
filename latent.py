@@ -54,7 +54,7 @@ class SeqEncoder(nn.Module):
   Token embeddings are a frozen copy of the denoiser's, projected down."""
 
   def __init__(self, vocab_size, seq_len, bits, dim=256, layers=2, heads=4,
-               emb_init=None, emb_dim=768):
+               emb_init=None, emb_dim=768, head_std=0.02):
     super().__init__()
     if emb_init is not None:
       emb_dim = emb_init.shape[1]
@@ -73,7 +73,7 @@ class SeqEncoder(nn.Module):
     # Small random init: bits start near p = 0.5 (KL ~ 0) but already depend on
     # the text. A zero head plus the zero z projection would be a saddle where
     # neither receives a useful gradient.
-    nn.init.normal_(self.head.weight, std=0.02)
+    nn.init.normal_(self.head.weight, std=head_std)
     nn.init.zeros_(self.head.bias)
 
   def forward(self, x0):
@@ -97,20 +97,33 @@ class LatentAdapter(nn.Module):
   """Encoder + z projection, hooked into the backbone's sigma_map."""
 
   def __init__(self, backbone, bits, vocab_size, seq_len, cond_dim,
-               enc_dim=256, enc_layers=2, enc_heads=4):
+               enc_dim=256, enc_layers=2, enc_heads=4, input_inject=False,
+               head_std=0.02):
     super().__init__()
     self.bits, self.cond_dim = bits, cond_dim
+    self.input_inject = bool(input_inject and bits)
     self.enc_cfg = dict(enc_dim=enc_dim, enc_layers=enc_layers,
                         enc_heads=enc_heads)
+    emb = vocab_embedding(backbone, vocab_size)
     if bits:
       self.encoder = SeqEncoder(vocab_size, seq_len, bits, enc_dim, enc_layers,
-                                enc_heads, vocab_embedding(backbone, vocab_size))
+                                enc_heads, emb, head_std=head_std)
       self.z_proj = nn.Linear(bits, cond_dim)
       nn.init.zeros_(self.z_proj.weight)
       nn.init.zeros_(self.z_proj.bias)
-    self._z_emb = None
+    self._z_emb, self._z_in = None, None
     self.hook_name, sigma_map = _find(backbone, 'sigma_map')
-    self._handle = sigma_map.register_forward_hook(self._hook)
+    self._handles = [sigma_map.register_forward_hook(self._hook)]
+    if self.input_inject:
+      # z also added to every token embedding: a direct path into the trunk,
+      # not only through each layer's scale/shift.
+      assert emb is not None, 'input_inject needs the token embedding size'
+      self.z_in_proj = nn.Linear(bits, emb.shape[1])
+      nn.init.zeros_(self.z_in_proj.weight)
+      nn.init.zeros_(self.z_in_proj.bias)
+      name, vocab_embed = _find(backbone, 'vocab_embed')
+      self.hook_name += f' + {name}'
+      self._handles.append(vocab_embed.register_forward_hook(self._in_hook))
 
   def _hook(self, module, inputs, output):
     if self._z_emb is None:
@@ -119,22 +132,33 @@ class LatentAdapter(nn.Module):
       f'latent batch {self._z_emb.shape[0]} != model batch {output.shape[0]}')
     return output + self._z_emb.to(output.dtype)
 
+  def _in_hook(self, module, inputs, output):
+    if self._z_in is None:
+      return output
+    return output + self._z_in.to(output.dtype).unsqueeze(1)
+
   def set_z(self, z):
     """Condition subsequent denoiser calls on bits z [B, K] (None clears)."""
-    self._z_emb = None if (z is None or not self.bits) else self.z_proj(2 * z - 1)
+    if z is None or not self.bits:
+      self._z_emb, self._z_in = None, None
+      return
+    zs = 2 * z - 1
+    self._z_emb = self.z_proj(zs)
+    self._z_in = self.z_in_proj(zs) if self.input_inject else None
 
   def sample_prior(self, n, device, generator=None):
     return torch.bernoulli(torch.full((n, self.bits), 0.5, device=device),
                            generator=generator)
 
   def remove(self):
-    self._handle.remove()
+    for h in self._handles:
+      h.remove()
 
 
 def save_checkpoint(path, adapter, backbone, extra):
   torch.save({
     'bits': adapter.bits, 'cond_dim': adapter.cond_dim,
-    'enc_cfg': adapter.enc_cfg,
+    'enc_cfg': adapter.enc_cfg, 'input_inject': adapter.input_inject,
     'adapter': {k: v for k, v in adapter.state_dict().items()
                 if not k.endswith('encoder.emb')},   # frozen copy, rebuilt
     'adaln': {n: p.detach().cpu() for n, p in adaln_parameters(backbone)},
@@ -150,7 +174,8 @@ def load_into(model, path, seq_len):
     for n, v in ck['adaln'].items():
       params[n].copy_(v.to(params[n].device, params[n].dtype))
   adapter = LatentAdapter(model.backbone, ck['bits'], model.vocab_size,
-                          seq_len, ck['cond_dim'], **ck['enc_cfg'])
+                          seq_len, ck['cond_dim'], **ck['enc_cfg'],
+                          input_inject=ck.get('input_inject', False))
   missing, unexpected = adapter.load_state_dict(ck['adapter'], strict=False)
   assert not unexpected and all(k.endswith('encoder.emb') for k in missing), (
     missing, unexpected)

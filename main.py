@@ -379,7 +379,12 @@ def latent_finetune(config, logger, tokenizer):
   cond_dim = adaln[0][1].shape[1]       # adaLN maps cond_dim -> k * hidden
   adapter = latent.LatentAdapter(
     model.backbone, lc.bits, model.vocab_size, L, cond_dim,
-    lc.enc_dim, lc.enc_layers, lc.enc_heads).to(device)
+    lc.enc_dim, lc.enc_layers, lc.enc_heads,
+    input_inject=lc.get('input_inject', False),
+    head_std=lc.get('enc_head_std', 0.02)).to(device)
+  if lc.get('freeze_encoder', False) and lc.bits:
+    for p in adapter.encoder.parameters():
+      p.requires_grad_(False)
   new_params = [p for p in adapter.parameters() if p.requires_grad]
   groups = [{'params': [p for _, p in adaln], 'lr': lc.lr}]
   if new_params:
@@ -389,7 +394,10 @@ def latent_finetune(config, logger, tokenizer):
   opt = torch.optim.AdamW(groups, weight_decay=0.0)
   n_ad = sum(p.numel() for _, p in adaln)
   n_new = sum(p.numel() for p in new_params)
-  logger.info(f'latent bits={lc.bits} beta={lc.beta} free_bits={lc.free_bits}; '
+  logger.info(f'latent bits={lc.bits} beta={lc.beta} free_bits={lc.free_bits} '
+              f"input_inject={lc.get('input_inject', False)} "
+              f"enc_head_std={lc.get('enc_head_std', 0.02)} "
+              f"freeze_encoder={lc.get('freeze_encoder', False)}; "
               f'conditioning hook at {adapter.hook_name}; trainable: adaLN '
               f'{n_ad / 1e6:.2f}M + latent {n_new / 1e6:.2f}M params')
 
@@ -493,7 +501,8 @@ def latent_finetune(config, logger, tokenizer):
       ((nll + beta * kl_term) / (L * lc.grad_accum)).backward()
       run['nll'] += nll.item() / L
       run['n'] += 1
-    torch.nn.utils.clip_grad_norm_([p for g in groups for p in g['params']], 1.0)
+    for g in groups:   # clip separately so the large adaLN gradients don't
+      torch.nn.utils.clip_grad_norm_(g['params'], 1.0)   # shrink the latent's
     opt.step()
     step += 1
     if step % lc.log_every == 0:

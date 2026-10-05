@@ -139,6 +139,9 @@ latent:  # mode=latent_finetune; latent.ckpt_path also used by sample_sweep
   enc_dim: 256
   enc_layers: 2
   enc_heads: 4
+  enc_head_std: 0.02  # encoder output init; ~1 makes bits a random hash of the text from step 0
+  freeze_encoder: False  # keep the (random-hash) encoder fixed; train only how z is used
+  input_inject: False  # also add z to every token embedding (direct path into the trunk)
   steps: 2000
   batch_size: 8
   grad_accum: 2
