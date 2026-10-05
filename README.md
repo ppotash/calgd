@@ -134,6 +134,43 @@ draws a different set of modes.
 
 Script: `probes/latent_probe.py`; per-run figures and metrics in `docs/probe/`.
 
+### Latent bits on a pretrained MDLM (fine-tuning): negative result
+
+Latent bits added to the released checkpoint by fine-tuning: an encoder q(z|x0), a projection
+of z added to the denoiser's conditioning vector (zero-initialised, so training starts exactly
+at the released model), trained with MDLM's loss plus a down-weighted KL. Every run has a matched
+control trained identically without a latent. Bounds are nats/token on 128 held-out sequences,
+with paired randomness so differences between runs are exact comparisons.
+
+| Setup (A100, 1,000–2,000 steps) | Uses z? (loss gap, random vs. true bits) | vs. matched control | Samples: word present when bit on / off |
+|---|---|---|---|
+| Learned encoder, 16 bits, KL weight 0.1 / 0 / free bits | KL collapses to ~0; no gap | equal | — |
+| Frozen random-hash encoder, 16 bits | no gap (true bits slightly worse) | slightly worse | — |
+| Oracle: 64 bits = "word w occurs", adaLN layers only | 0.0028 | worse by 0.006 | 0.55 / 0.54 |
+| Oracle, + z added to token embeddings | 0.0108 | worse by 0.027 | 0.58 / 0.50 |
+| Oracle, full fine-tune | 0.0028 | worse by 0.006 | 0.59 / 0.52 |
+| Oracle, full fine-tune, trained only on ≥80% masked inputs | 0.0075 (on that range) | worse by 0.006 | 0.53 / 0.45 (16 steps), 0.59 / 0.48 (64) |
+
+- **Information budget.** A latent can lower the loss by at most the information it carries:
+  16 bits ≤ ~11 nats per 1,024-token sequence (≤0.011 nats/token), 64 bits ≤ 0.043. Loss gaps
+  are therefore a low-power test; sample steering is the more sensitive one.
+- **The denoiser picks up only a sliver of even guaranteed-useful information,** and conditioning
+  costs more than it gains: with the *true* oracle bits, every configuration is slightly worse
+  than its control. More trainable parameters (full fine-tune) or concentrating training where
+  the bits matter (heavily masked inputs) did not change this.
+- **Interpretation:** a strong pretrained denoiser already infers document-level properties from
+  visible text, so a latent adds information only when nearly everything is masked, and a model
+  pretrained with a constant conditioning vector does not readily learn to use a variable one.
+  In the synthetic probe, where the denoiser is trained jointly with the latent, it works.
+- **Caveat:** fine-tuning itself degrades sampling (gen-PPL ≈ 470–490 / 205–218 at 16 / 64 steps
+  for all fine-tuned models, latent or not, vs. 343 / 140 for the released checkpoint on the same
+  setup) while slightly improving the bound. Likely cause, untested: the released weights are an
+  EMA; the fine-tunes save raw weights. This does not affect the matched comparisons above.
+
+Code: `latent.py`; `mode=latent_finetune` (options: `latent.oracle`, `latent.train_scope`,
+`latent.t_min`, `latent.input_inject`, `latent.shuffle_stream`); `sample_sweep` with
+`latent.ckpt_path` and `latent.sample_z`.
+
 ## Changes from upstream MDLM
 
 - **Optional heavy dependencies.** `flash-attn`, `mamba-ssm` and `causal-conv1d` imports are
