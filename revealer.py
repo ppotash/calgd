@@ -309,12 +309,17 @@ def label_reliability(gain):
   return pair, r, r_full
 
 
-def owt_chunks(tokenizer, seq_len, skip=0):
+def owt_chunks(tokenizer, seq_len, skip=0, shuffle_seed=None,
+               shuffle_buffer=10_000):
   """Stream OpenWebText as MDLM-style wrapped chunks: [BOS] + text + [EOS],
-  documents joined by EOS (BOS = EOS for GPT-2). Yields lists of token ids."""
+  documents joined by EOS (BOS = EOS for GPT-2). Yields lists of token ids.
+  shuffle_seed: shuffle shard order and documents (deterministic per seed), so
+  a short run sees a broad sample of the corpus instead of its first files."""
   import datasets
   ds = datasets.load_dataset('Skylion007/openwebtext', split='train',
                              streaming=True)
+  if shuffle_seed is not None:
+    ds = ds.shuffle(seed=shuffle_seed, buffer_size=shuffle_buffer)
   eos = tokenizer.eos_token_id
   bos = tokenizer.bos_token_id if tokenizer.bos_token_id is not None else eos
   body = seq_len - 2

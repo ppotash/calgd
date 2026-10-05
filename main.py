@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import time
@@ -138,7 +139,10 @@ def sample_sweep(config, logger, tokenizer):
   if adapter is not None and adapter.bits and \
       config.latent.get('sample_z', 'prior') == 'data':
     import revealer
-    stream = revealer.owt_chunks(model.tokenizer, config.model.length)
+    lc = config.latent
+    stream = revealer.owt_chunks(
+      model.tokenizer, config.model.length,
+      shuffle_seed=lc.stream_seed if lc.get('shuffle_stream', False) else None)
     pool_x = torch.tensor([next(stream)
                            for _ in range(config.latent.z_pool_seqs)])
     z_pool = latent.data_z_pool(adapter, pool_x, model.device)
@@ -433,7 +437,9 @@ def latent_finetune(config, logger, tokenizer):
   logger.info(f'latent bits={lc.bits} beta={lc.beta} free_bits={lc.free_bits} '
               f"input_inject={lc.get('input_inject', False)} "
               f"enc_head_std={lc.get('enc_head_std', 0.02)} "
-              f"freeze_encoder={lc.get('freeze_encoder', False)}; "
+              f"freeze_encoder={lc.get('freeze_encoder', False)} "
+              f"t_min={lc.get('t_min', 0.0)} "
+              f"shuffle_stream={lc.get('shuffle_stream', False)}; "
               f'conditioning hook at {adapter.hook_name}; scope={scope}; '
               f'trainable: denoiser '
               f'{n_ad / 1e6:.2f}M + latent {n_new / 1e6:.2f}M params')
@@ -460,7 +466,8 @@ def latent_finetune(config, logger, tokenizer):
     history = json.load(open(metrics_path)) if os.path.exists(metrics_path) else []
     logger.info(f'Resumed from step {step}')
 
-  val_stream = revealer.owt_chunks(model.tokenizer, L)
+  shuffle = lc.stream_seed if lc.get('shuffle_stream', False) else None
+  val_stream = revealer.owt_chunks(model.tokenizer, L, shuffle_seed=shuffle)
   val = torch.tensor([next(val_stream) for _ in range(lc.eval_seqs)])
   if adapter.oracle == 'presence':
     if step == 0:   # on resume the chosen tokens come from latest.pt
@@ -474,7 +481,21 @@ def latent_finetune(config, logger, tokenizer):
     logger.info('oracle bits = presence of: ' + ', '.join(
       f'{w.strip()!r} ({p:.2f})' for w, p in zip(words, present))
       + '  (held-out presence rate)')
-  stream = revealer.owt_chunks(model.tokenizer, L, skip=consumed)
+  stream = revealer.owt_chunks(model.tokenizer, L, skip=consumed,
+                               shuffle_seed=shuffle)
+
+  @contextlib.contextmanager
+  def t_range(lo):
+    """Restrict sampled diffusion times to [lo, 1] (masked fraction >= ~lo)."""
+    if lo <= 0:
+      yield
+      return
+    orig = type(model)._sample_t
+    model._sample_t = lambda n, dev: lo + (1 - lo) * orig(model, n, dev)
+    try:
+      yield
+    finally:
+      del model._sample_t
 
   def evaluate():
     """Held-out bound per token (full KL), and how much z helps the decoder.
@@ -484,9 +505,9 @@ def latent_finetune(config, logger, tokenizer):
     adapter.eval()
     devs = [torch.cuda.current_device()] if torch.cuda.is_available() else []
 
-    def run_pass(z_source):
+    def run_pass(z_source, t_lo=0.0):
       total_nll, total_kl = 0.0, 0.0
-      with torch.random.fork_rng(devices=devs):
+      with torch.random.fork_rng(devices=devs), t_range(t_lo):
         torch.manual_seed(1234)
         gz = torch.Generator(device=device).manual_seed(
           4321 if z_source == 'encoder' else 8765)
@@ -503,22 +524,32 @@ def latent_finetune(config, logger, tokenizer):
             adapter.set_z(None)
       return total_nll, total_kl
 
+    t_lo = lc.get('t_min', 0.0)
     with torch.no_grad():
       nll, kl = run_pass('encoder')
       nll_prior = run_pass('prior')[0] if lc.bits else nll
+      if t_lo > 0:   # also on the heavily masked range the run trains on
+        nll_hi = run_pass('encoder', t_lo)[0]
+        nll_hi_prior = run_pass('prior', t_lo)[0] if lc.bits else nll_hi
     n_seq = len(val) * lc.eval_repeats
     out = {'step': step, 'bound_per_tok': (nll + kl) / (n_seq * L),
            'nll_per_tok': nll / (n_seq * L), 'kl_nats_per_seq': kl / n_seq}
     if lc.bits:
       out['nll_per_tok_prior_z'] = nll_prior / (n_seq * L)
+    if t_lo > 0:
+      out['nll_hi_t'] = nll_hi / (n_seq * L)
+      out['nll_hi_t_prior_z'] = nll_hi_prior / (n_seq * L)
     adapter.train()
     return out
 
   def log_eval(m):
     extra = (f"  (nll with prior z {m['nll_per_tok_prior_z']:.4f}, "
              f"KL {m['kl_nats_per_seq']:.2f} nats/seq)" if lc.bits else '')
+    hi = (f"  | t>={lc.t_min}: nll {m['nll_hi_t']:.4f}"
+          + (f" (prior z {m['nll_hi_t_prior_z']:.4f})" if lc.bits else '')
+          if 'nll_hi_t' in m else '')
     logger.info(f"[eval step {m['step']}] bound/tok {m['bound_per_tok']:.4f}"
-                f"  nll/tok {m['nll_per_tok']:.4f}{extra}")
+                f"  nll/tok {m['nll_per_tok']:.4f}{extra}{hi}")
 
   def save(path, with_opt):
     extra = {'step': step, 'consumed': consumed,
@@ -553,7 +584,8 @@ def latent_finetune(config, logger, tokenizer):
           per_bit = per_bit.clamp(min=lc.free_bits)
         kl_term = per_bit.sum()
         run['kl'] += kl_bits.sum(-1).mean().item()
-      nll = model._forward_pass_diffusion(x0).sum(-1).mean()
+      with t_range(lc.get('t_min', 0.0)):
+        nll = model._forward_pass_diffusion(x0).sum(-1).mean()
       adapter.set_z(None)
       ((nll + beta * kl_term) / (L * lc.grad_accum)).backward()
       run['nll'] += nll.item() / L
@@ -577,7 +609,7 @@ def latent_finetune(config, logger, tokenizer):
         json.dump(history, f, indent=1)
   final = os.path.join(lc.save_dir, 'final.pt')
   save(final, with_opt=False)
-  logger.info(f'Done. Adapter for sampling: latent.ckpt_path={final}')
+  logger.info(f'Done. Checkpoint for sampling: latent.ckpt_path={final}')
 
 
 def _ppl_eval(config, logger, tokenizer):
