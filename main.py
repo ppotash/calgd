@@ -414,35 +414,39 @@ def latent_finetune(config, logger, tokenizer):
 
   def evaluate():
     """Held-out bound per token (full KL), and how much z helps the decoder.
-    Fixed random numbers every time (noise levels and masks from one stream,
-    z draws from a separate one), so evaluations are paired across steps and
-    between the latent run and the control."""
+    Every pass replays the same noise levels and masks (seeded stream), so the
+    encoder-z and prior-z passes are paired with each other, across steps, and
+    with the control run. z draws use separate generators."""
     adapter.eval()
-    nll = kl = nll_prior = 0.0
     devs = [torch.cuda.current_device()] if torch.cuda.is_available() else []
-    with torch.no_grad(), torch.random.fork_rng(devices=devs):
-      torch.manual_seed(1234)
-      gz = torch.Generator(device=device).manual_seed(4321)
-      for _ in range(lc.eval_repeats):
-        for i in range(0, len(val), B):
-          x0 = val[i:i + B].to(device)
-          if lc.bits:
-            p = torch.sigmoid(adapter.encoder(x0).float())
-            adapter.set_z(torch.bernoulli(p, generator=gz))
-            kl += latent.kl_to_uniform(p).sum().item()
-          nll += model._forward_pass_diffusion(x0).sum().item()
-          adapter.set_z(None)
-      if lc.bits:   # separate pass so the main passes stay paired with the control
-        for i in range(0, len(val), B):
-          x0 = val[i:i + B].to(device)
-          adapter.set_z(adapter.sample_prior(len(x0), device, gz))
-          nll_prior += model._forward_pass_diffusion(x0).sum().item()
-          adapter.set_z(None)
+
+    def run_pass(z_source):
+      total_nll, total_kl = 0.0, 0.0
+      with torch.random.fork_rng(devices=devs):
+        torch.manual_seed(1234)
+        gz = torch.Generator(device=device).manual_seed(
+          4321 if z_source == 'encoder' else 8765)
+        for _ in range(lc.eval_repeats):
+          for i in range(0, len(val), B):
+            x0 = val[i:i + B].to(device)
+            if lc.bits and z_source == 'encoder':
+              p = torch.sigmoid(adapter.encoder(x0).float())
+              adapter.set_z(torch.bernoulli(p, generator=gz))
+              total_kl += latent.kl_to_uniform(p).sum().item()
+            elif lc.bits:
+              adapter.set_z(adapter.sample_prior(len(x0), device, gz))
+            total_nll += model._forward_pass_diffusion(x0).sum().item()
+            adapter.set_z(None)
+      return total_nll, total_kl
+
+    with torch.no_grad():
+      nll, kl = run_pass('encoder')
+      nll_prior = run_pass('prior')[0] if lc.bits else nll
     n_seq = len(val) * lc.eval_repeats
     out = {'step': step, 'bound_per_tok': (nll + kl) / (n_seq * L),
            'nll_per_tok': nll / (n_seq * L), 'kl_nats_per_seq': kl / n_seq}
     if lc.bits:
-      out['nll_per_tok_prior_z'] = nll_prior / (len(val) * L)
+      out['nll_per_tok_prior_z'] = nll_prior / (n_seq * L)
     adapter.train()
     return out
 

@@ -70,7 +70,10 @@ class SeqEncoder(nn.Module):
                                       enable_nested_tensor=False)
     self.norm = nn.LayerNorm(dim)
     self.head = nn.Linear(dim, bits)
-    nn.init.zeros_(self.head.weight)   # starts at p = 0.5 for every bit
+    # Small random init: bits start near p = 0.5 (KL ~ 0) but already depend on
+    # the text. A zero head plus the zero z projection would be a saddle where
+    # neither receives a useful gradient.
+    nn.init.normal_(self.head.weight, std=0.02)
     nn.init.zeros_(self.head.bias)
 
   def forward(self, x0):
