@@ -134,6 +134,16 @@ def sample_sweep(config, logger, tokenizer):
                                config.model.length)
     logger.info(f'Loaded latent adapter (bits={adapter.bits}) from '
                 f'{config.latent.ckpt_path}')
+  z_pool = None
+  if adapter is not None and adapter.bits and \
+      config.latent.get('sample_z', 'prior') == 'data':
+    import revealer
+    stream = revealer.owt_chunks(model.tokenizer, config.model.length)
+    pool_x = torch.tensor([next(stream)
+                           for _ in range(config.latent.z_pool_seqs)])
+    z_pool = latent.data_z_pool(adapter, pool_x, model.device)
+    logger.info(f'Sampling z from {len(z_pool)} real held-out sequences '
+                f'(mean bit rate {z_pool.mean():.2f}) instead of the prior')
   out_path = os.path.join(os.getcwd(), 'sample_sweep.json')
   results = {
     'checkpoint': config.eval.checkpoint_path,
@@ -146,6 +156,7 @@ def sample_sweep(config, logger, tokenizer):
     'seed': config.seed,
     'latent_ckpt': config.latent.get('ckpt_path'),
     'latent_bits': adapter.bits if adapter is not None else 0,
+    'sample_z': config.latent.get('sample_z', 'prior'),
     'settings': []}
   for steps in config.sampling.sweep_steps:
     model.gen_ppl_metric.reset()
@@ -153,7 +164,11 @@ def sample_sweep(config, logger, tokenizer):
     zs, pres = [], []
     for _ in range(config.sampling.num_sample_batches):
       if adapter is not None and adapter.bits:
-        z = adapter.sample_prior(config.loader.eval_batch_size, model.device)
+        if z_pool is not None:
+          idx = torch.randint(0, len(z_pool), (config.loader.eval_batch_size,))
+          z = z_pool[idx]
+        else:
+          z = adapter.sample_prior(config.loader.eval_batch_size, model.device)
         adapter.set_z(z)
       torch.cuda.synchronize()
       t0 = time.time()
@@ -187,7 +202,7 @@ def sample_sweep(config, logger, tokenizer):
                 f"sec/sample={rec['sec_per_sample']:.2f}"
                 + (f"  oracle word present: bit on {rec['oracle_present_when_on']:.2f}"
                    f" / off {rec['oracle_present_when_off']:.2f}"
-                   f" (agreement {rec['oracle_agreement']:.2f}, chance 0.50)"
+                   f" (agreement {rec['oracle_agreement']:.2f})"
                    if 'oracle_agreement' in rec else ''))
   print(f"\n{'steps':>6} {'gen_ppl':>9} {'entropy':>8} {'sec/sample':>11}")
   for r in results['settings']:
@@ -386,8 +401,13 @@ def latent_finetune(config, logger, tokenizer):
   device, L, B = model.device, config.model.length, lc.batch_size
   for p in model.parameters():
     p.requires_grad_(False)
+  scope = lc.get('train_scope', 'adaln')
+  assert scope in ('adaln', 'all'), scope
   adaln = latent.adaln_parameters(model.backbone)
-  for _, p in adaln:
+  adaln_ids = {id(p) for _, p in adaln}
+  trunk = ([p for p in model.backbone.parameters() if id(p) not in adaln_ids]
+           if scope == 'all' else [])
+  for p in [p for _, p in adaln] + trunk:
     p.requires_grad_(True)
   cond_dim = adaln[0][1].shape[1]       # adaLN maps cond_dim -> k * hidden
   adapter = latent.LatentAdapter(
@@ -401,18 +421,21 @@ def latent_finetune(config, logger, tokenizer):
       p.requires_grad_(False)
   new_params = [p for p in adapter.parameters() if p.requires_grad]
   groups = [{'params': [p for _, p in adaln], 'lr': lc.lr}]
+  if trunk:
+    groups.append({'params': trunk, 'lr': lc.trunk_lr})
   if new_params:
     groups.append({'params': new_params, 'lr': lc.lr * lc.new_lr_mult})
   for g in groups:
     g['base_lr'] = g['lr']
   opt = torch.optim.AdamW(groups, weight_decay=0.0)
-  n_ad = sum(p.numel() for _, p in adaln)
+  n_ad = sum(p.numel() for _, p in adaln) + sum(p.numel() for p in trunk)
   n_new = sum(p.numel() for p in new_params)
   logger.info(f'latent bits={lc.bits} beta={lc.beta} free_bits={lc.free_bits} '
               f"input_inject={lc.get('input_inject', False)} "
               f"enc_head_std={lc.get('enc_head_std', 0.02)} "
               f"freeze_encoder={lc.get('freeze_encoder', False)}; "
-              f'conditioning hook at {adapter.hook_name}; trainable: adaLN '
+              f'conditioning hook at {adapter.hook_name}; scope={scope}; '
+              f'trainable: denoiser '
               f'{n_ad / 1e6:.2f}M + latent {n_new / 1e6:.2f}M params')
 
   latest = os.path.join(lc.save_dir, 'latest.pt')
@@ -420,12 +443,19 @@ def latent_finetune(config, logger, tokenizer):
   step, consumed, history = 0, lc.eval_seqs, []
   if os.path.exists(latest):
     ck = torch.load(latest, map_location='cpu')
-    params = dict(adaln)
-    with torch.no_grad():
-      for n, v in ck['adaln'].items():
-        params[n].copy_(v.to(device))
+    if 'backbone_state' in ck:
+      model.backbone.load_state_dict(ck['backbone_state'])
+    else:
+      params = dict(adaln)
+      with torch.no_grad():
+        for n, v in ck['adaln'].items():
+          params[n].copy_(v.to(device))
     adapter.load_state_dict(ck['adapter'], strict=False)
-    opt.load_state_dict(ck['opt'])
+    if 'opt' in ck:
+      opt.load_state_dict(ck['opt'])
+    else:
+      logger.info('No optimizer state in checkpoint (train_scope=all); '
+                  'resuming with a fresh optimizer.')
     step, consumed = ck['step'], ck['consumed']
     history = json.load(open(metrics_path)) if os.path.exists(metrics_path) else []
     logger.info(f'Resumed from step {step}')
@@ -493,9 +523,10 @@ def latent_finetune(config, logger, tokenizer):
   def save(path, with_opt):
     extra = {'step': step, 'consumed': consumed,
              'config': omegaconf.OmegaConf.to_container(lc)}
-    if with_opt:
+    full = scope == 'all'
+    if with_opt and not full:   # full-model optimizer state would be ~1.4 GB
       extra['opt'] = opt.state_dict()
-    latent.save_checkpoint(path, adapter, model.backbone, extra)
+    latent.save_checkpoint(path, adapter, model.backbone, extra, full=full)
 
   if step == 0:
     m = evaluate()

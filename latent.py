@@ -198,25 +198,46 @@ class LatentAdapter(nn.Module):
       h.remove()
 
 
-def save_checkpoint(path, adapter, backbone, extra):
+def data_z_pool(adapter, chunks, device, batch=8):
+  """Bits for real held-out sequences [N, L] (encoder posterior samples, or the
+  oracle's exact bits). Sampling z from this pool instead of the uniform prior
+  removes prior mismatch, e.g. for the oracle, whose bits are correlated."""
+  out = []
+  with torch.no_grad():
+    for i in range(0, len(chunks), batch):
+      p = torch.sigmoid(adapter.encoder(chunks[i:i + batch].to(device)).float())
+      out.append(torch.bernoulli(p))
+  return torch.cat(out)
+
+
+def save_checkpoint(path, adapter, backbone, extra, full=False):
+  """full=True stores the whole denoiser (train_scope=all), else only the
+  fine-tuned adaLN layers."""
+  weights = ({'backbone_state': {k: v.detach().cpu()
+                                 for k, v in backbone.state_dict().items()}}
+             if full else
+             {'adaln': {n: p.detach().cpu()
+                        for n, p in adaln_parameters(backbone)}})
   torch.save({
     'bits': adapter.bits, 'cond_dim': adapter.cond_dim,
     'enc_cfg': adapter.enc_cfg, 'input_inject': adapter.input_inject,
     'oracle': adapter.oracle,
     'adapter': {k: v for k, v in adapter.state_dict().items()
                 if not k.endswith('encoder.emb')},   # frozen copy, rebuilt
-    'adaln': {n: p.detach().cpu() for n, p in adaln_parameters(backbone)},
-    **extra}, path)
+    **weights, **extra}, path)
 
 
 def load_into(model, path, seq_len):
   """Attach a trained adapter (or a bits=0 control) to a Diffusion model.
   Copies the fine-tuned adaLN weights into the backbone. Returns the adapter."""
   ck = torch.load(path, map_location='cpu')
-  params = dict(adaln_parameters(model.backbone))
-  with torch.no_grad():
-    for n, v in ck['adaln'].items():
-      params[n].copy_(v.to(params[n].device, params[n].dtype))
+  if 'backbone_state' in ck:
+    model.backbone.load_state_dict(ck['backbone_state'])
+  else:
+    params = dict(adaln_parameters(model.backbone))
+    with torch.no_grad():
+      for n, v in ck['adaln'].items():
+        params[n].copy_(v.to(params[n].device, params[n].dtype))
   adapter = LatentAdapter(model.backbone, ck['bits'], model.vocab_size,
                           seq_len, ck['cond_dim'], **ck['enc_cfg'],
                           input_inject=ck.get('input_inject', False),

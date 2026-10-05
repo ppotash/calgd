@@ -147,6 +147,8 @@ latent:  # mode=latent_finetune; latent.ckpt_path also used by sample_sweep
   steps: 2000
   batch_size: 8
   grad_accum: 2
+  train_scope: adaln  # adaln: only the adaLN layers; all: full fine-tune of the denoiser
+  trunk_lr: 3e-5  # train_scope=all: lr for the rest of the denoiser
   lr: 1e-4  # adaLN layers
   new_lr_mult: 3.0  # encoder and z projection get lr * this
   warmup: 100
@@ -157,4 +159,6 @@ latent:  # mode=latent_finetune; latent.ckpt_path also used by sample_sweep
   eval_repeats: 2
   save_dir: null
   ckpt_path: null  # trained adapter (final.pt) for sample_sweep
+  sample_z: prior  # sample_sweep: prior (uniform bits) or data (bits of real held-out sequences)
+  z_pool_seqs: 256  # sample_z=data: number of held-out sequences in the pool
   seed: 0
