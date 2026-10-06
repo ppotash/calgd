@@ -1,15 +1,37 @@
 # CALGD: Context-Aware Latent-Gated Diffusion
 
-**Does a sampled discrete latent, or an information-gain revealer, improve few-step sampling in
+**Can a sampled discrete latent, or an information-gain revealer, improve few-step sampling in
 masked diffusion language models?**
 
 This is a research fork of [MDLM](https://github.com/kuleshov-group/mdlm) (Sahoo et al.,
 NeurIPS 2024). All credit for the base framework, models and checkpoints goes to the original
 authors; see [Based on MDLM](#based-on-mdlm) and [Citation](#citation).
 
-> **Status:** baselines reproduced; the revealer is a documented **negative** result; the latent
-> bits give a large, replicated gain on synthetic data. Next: the latent at real scale, as a
-> fine-tune of the MDLM checkpoint. See [Roadmap](#roadmap).
+> **Status:** the revealer is a documented **negative** result. Latent bits give large gains on
+> synthetic data, do **not** work when fine-tuned into a pretrained MDLM, and, when trained jointly
+> from scratch on real text with prefix-token conditioning and a learned prior, improve few-step
+> samples by **12–14% at 2–4 steps and 6–9% at 8–16 steps** (2 seeds, small models). Next: does
+> the benefit grow with model quality? See [Roadmap](#roadmap).
+
+## Key findings
+
+1. **Unmasking order matters a lot, but a learned "information-gain" order adds nothing over
+   confidence.** Measured against the true text, the most informative reveal is mostly the one
+   most likely to be correct, which confidence already captures.
+2. **A sequence-level latent collapses under the exact likelihood bound.** A masked diffusion
+   model's bound is already tight without it; the latent's value is only in few-step sampling,
+   which the per-token training loss never measures. Training needs a down-weighted KL or free bits.
+3. **On synthetic data with hidden global modes, the latent is a large win** (one-step validity
+   0 → 0.69), at no cost in likelihood.
+4. **Fine-tuned into a pretrained MDLM, the latent barely helps,** even when its bits carry
+   guaranteed-useful oracle information: a strong denoiser infers document-level properties from
+   context, and a model pretrained with a constant conditioning vector does not readily use a
+   variable one.
+5. **Trained jointly from scratch on real text it helps modestly,** but only with three ingredients:
+   latent dropout (so the model still learns context), prefix-token conditioning (so z does not
+   interfere with token representations) and a learned prior over codes. The gain is far smaller
+   than on synthetic data because most of a text model's few-step errors are local, which a
+   document-level code cannot fix.
 
 ## Motivation
 
@@ -19,25 +41,29 @@ loss when sampling with few steps. This project tests two ways of reducing that 
 
 1. **Latent bits.** A short vector of discrete bits `z` is sampled once per sequence and
    conditions the denoiser, so tokens decoded in the same step share `z` and can be correlated
-   instead of independent. Training uses an encoder `q(z | x0)`, a uniform prior `p(z)` for
-   sampling, and a KL term. The KL must be down-weighted during training (weight ≈ 0.1): under
-   the exact bound the latent collapses (see the probe below). Reported bounds use the full KL.
+   instead of independent. Training uses an encoder `q(z | x0)` and a KL term to a prior; the
+   working recipe on real text gives `z` to the denoiser as prefix tokens, drops it for half of
+   training sequences, and samples it from a prior fitted to the encoder's codes. Reported bounds
+   always use the full KL.
 2. **Information-gain revealer.** A small head scores masked positions by how much revealing them
    would reduce the loss on the rest of the sequence, and the sampler unmasks the highest-scoring
    positions first. It is trained on counterfactual reveals with a pairwise ranking loss.
 
-The claim being tested is about **sample quality at a fixed small number of steps**, at matched
-compute and matched diversity; neither idea is expected to improve likelihood much.
+The claim being tested is about **sample quality at a fixed small number of steps**; neither idea
+is expected to improve likelihood much.
 
 ## Evaluation protocol
 
-- **Primary:** generative perplexity under GPT-2 Large **and** per-sample token entropy, at
-  16/32/64 sampling steps. Lower generative perplexity can come from repetitive text, so samplers
-  are compared at matched entropy; real OpenWebText has 5.45 ± 0.16 nats.
+- **Sample quality:** generative perplexity under GPT-2 Large **and** per-sample token entropy
+  (plus repeated 4-grams for the from-scratch models). Lower generative perplexity can come from
+  repetitive text, so samplers are compared at matched entropy where possible.
 - **Sampler baselines:** MDLM's `ddpm_cache`; fixed-count unmasking in random order; and
   confidence order with MaskGIT-style annealed noise, swept over temperature to trace a curve.
-- **Secondary:** validation perplexity bound (OpenWebText, WikiText-2, PTB).
-- **Noise:** single-run perplexity varies by about ±4% on WikiText-2, and generative perplexity
+- **Latent models:** compared with the *same weights* with `z` switched off (and with a matched
+  control trained without a latent), with bootstrap confidence intervals over samples.
+- **Likelihood:** validation bounds with paired randomness, so differences between runs and steps
+  are exact comparisons.
+- **Noise:** single-run perplexity varies by about ±4% on WikiText-2 and generative perplexity
   from 64 samples by about ±10%, so comparisons use several seeds or confidence intervals.
 
 ## Roadmap
@@ -46,11 +72,15 @@ compute and matched diversity; neither idea is expected to improve likelihood mu
 - [x] **Evaluation pipeline:** `mode=sample_sweep`, sample entropy, ordered samplers, float64
       sampling.
 - [x] **Baseline sweeps** for MDLM, random and confidence ordering.
-- [x] **Revealer on the frozen MDLM checkpoint** (negative; see results).
-- [x] **Synthetic probes** for the latent (positive, 3 seeds; see results).
-- [ ] **Latent fine-tune of MDLM** (encoder + latent conditioning, KL weight 0.1) with a matched
-      no-latent fine-tune as control.
-- [ ] **Latent from scratch** at ~125M parameters on OpenWebText, if the fine-tune is positive.
+- [x] **Revealer on the frozen MDLM checkpoint** (negative).
+- [x] **Synthetic probes** for the latent (positive, 3 seeds).
+- [x] **Latent fine-tune of MDLM** (negative, with oracle diagnostics).
+- [x] **Latent trained jointly from scratch on real text, small scale** (positive but modest,
+      2 seeds).
+- [ ] **Scale up** (~125M parameters, several billion tokens): does the few-step benefit grow as
+      the model makes fewer local errors?
+- [ ] **Mixed-domain corpus** (English, code, other languages): data with stronger global modes,
+      closer to the synthetic setting.
 
 ## Results
 
@@ -68,7 +98,7 @@ gap. All comparisons in this project are against these measured baselines.
 
 ### Sampler baselines (64 samples per point)
 
-Gen-PPL under GPT-2 Large; real OpenWebText entropy is 5.45 ± 0.16 nats.
+Gen-PPL under GPT-2 Large; real OpenWebText entropy is 5.45 ± 0.16 nats (1,024-token chunks).
 
 | Steps | `ddpm_cache` | Random order | Confidence @ entropy 5.45 |
 |---|---|---|---|
@@ -161,7 +191,6 @@ with paired randomness so differences between runs are exact comparisons.
 - **Interpretation:** a strong pretrained denoiser already infers document-level properties from
   visible text, so a latent adds information only when nearly everything is masked, and a model
   pretrained with a constant conditioning vector does not readily learn to use a variable one.
-  In the synthetic probe, where the denoiser is trained jointly with the latent, it works.
 - **Caveat:** fine-tuning itself degrades sampling (gen-PPL ≈ 470–490 / 205–218 at 16 / 64 steps
   for all fine-tuned models, latent or not, vs. 343 / 140 for the released checkpoint on the same
   setup) while slightly improving the bound. Likely cause, untested: the released weights are an
@@ -170,6 +199,60 @@ with paired randomness so differences between runs are exact comparisons.
 Code: `latent.py`; `mode=latent_finetune` (options: `latent.oracle`, `latent.train_scope`,
 `latent.t_min`, `latent.input_inject`, `latent.shuffle_stream`); `sample_sweep` with
 `latent.ckpt_path` and `latent.sample_z`.
+
+### Latent bits trained jointly from scratch on real text
+
+A 51–53M-parameter masked diffusion transformer (8 layers, width 512) trained from scratch on
+256-token windows of OpenWebText (500M tokens, GPT-2 tokenizer; 15k steps × 128 sequences,
+≈35 min per run on an A100, EMA weights for evaluation). Each latent run has a matched control
+with identical data order and trunk initialisation. Script: `probes/text_scratch.py`.
+
+**What it took.** Five configurations failed before one worked:
+
+| Variant | Outcome |
+|---|---|
+| z added to every token embedding | latent used, but training stalls on the unigram plateau ~4,000 steps longer; ends 0.68 nats/token behind the control |
+| + encoder no longer trains the shared embedding | same stall: the latent itself is the shortcut |
+| + latent dropout 0.5 | learns normally, but the latent collapses as context is learned |
+| + free bits (0.3 nats/bit) | still collapses: any z input makes predictions *worse* than none while context is being learned, so the denoiser learns to ignore it |
+| **z as 4 prefix tokens + dropout 0.5 + free bits** | **learns normally and keeps using z** |
+
+**Likelihood (step 15k).** Within the latent model, the document's own code beats z switched off
+by 0.011 / 0.012 nats/token (seeds 0 / 1) and a random code by 0.029 / 0.026; the gaps are stable
+over the last 10k steps. With a learned autoregressive prior over codes (texts use ~17k of the
+65,536 codes; prior NLL 9.1 vs. 11.1 nats for uniform), the KL falls from 5.4 to 3.5 nats/sequence
+and the bound comes within 0.001–0.003 nats/token of the same model with z off: the latent is
+nearly free in likelihood but does not improve it.
+
+**Few-step samples** (512 samples; gen-PPL relative to the same model with z off; z from the
+learned prior):
+
+| Steps | Seed 0 | Seed 1 | Combined (95% CI) |
+|---|---|---|---|
+| 2 | 0.89 | 0.86 | **0.875** (0.852–0.898) |
+| 4 | 0.87 | 0.86 | **0.864** (0.839–0.891) |
+| 8 | 0.93 | 0.89 | **0.913** (0.882–0.943) |
+| 16 | 0.95 | 0.92 | **0.936** (0.903–0.967) |
+
+The combined interval reflects sampling noise within each model; with only two training seeds
+it does not capture seed-to-seed variation, though the two seeds agree closely.
+
+The control matches the latent model with z off (ratios 0.98–1.04), so the gain is not from the
+prefix tokens making a better model. The benefit is largest at 2–4 steps and fades with more
+steps, as expected if the latent fixes errors from committing many tokens at once. Drawing z
+uniformly instead of from the learned prior loses most of the gain beyond 4 steps.
+
+**Caveats.** Two training seeds, small models: all samples are weak in absolute terms (gen-PPL
+≈2,400 at 2 steps and ≈650 at 16, vs. 19.6 for real text). Samples with z are 0.01–0.04 nats lower
+in entropy, which accounts for part of the gain.
+
+**Interpretation.** A sequence-level latent helps real-text few-step sampling only modestly
+(≈10%), compared with the synthetic probe, because most of a text model's uncertainty and few-step
+errors are local, which a document-level code cannot fix, and because context recovers most
+document-level information once a fraction of tokens is visible. Whether the benefit grows as
+stronger models make fewer local errors is the open question for scaling up.
+
+Per-run training histories and sample metrics: `docs/scratch/`.
 
 ## Changes from upstream MDLM
 
@@ -185,7 +268,12 @@ Code: `latent.py`; `mode=latent_finetune` (options: `latent.oracle`, `latent.tra
 - **Revealer pipeline** (`revealer.py`): `mode=revealer_label` (counterfactual information-gain
   labels, resumable) and `mode=revealer_train` (head training with confidence baselines,
   reliability and bootstrap confidence intervals).
+- **Latent fine-tuning** (`latent.py`): `mode=latent_finetune` with a matched-control option
+  (`latent.bits=0`), oracle bits, full or adaLN-only fine-tuning, high-noise training, and latent
+  sampling in `sample_sweep` (`latent.ckpt_path`, `latent.sample_z`).
 - **Latent probe** (`probes/latent_probe.py`): standalone synthetic experiment.
+- **From-scratch text experiment** (`probes/text_scratch.py`): data preparation, two-arm training,
+  learned prior fitting, few-step sampling with bootstrap-ready per-sample scores.
 - **GPT-2 Large is loaded once** for generative perplexity instead of on every batch.
 
 ## Quickstart
@@ -205,27 +293,47 @@ python main.py mode=sample_sweep backbone=hf_dit eval.checkpoint_path=/content/m
   sampling.predictor=ordered sampling.order=confidence sampling.confidence_temp=20 \
   loader.eval_batch_size=8 sampling.num_sample_batches=8 wandb=null
 
-# Latent probe
+# Latent probe (synthetic)
 python probes/latent_probe.py --out probe_out --bits 0 4 --beta 0.1 --tag beta0.1
 ```
 
+The from-scratch text experiment needs no MDLM setup, only PyTorch, `transformers` and `datasets`
+(a fresh Colab runtime has them):
+
+```bash
+D=/path/on/drive/scratch
+python probes/text_scratch.py prepare   --out $D --tokens 500000000   # ~6 min, CPU is fine
+python probes/text_scratch.py train     --out $D --bits 0              # control
+python probes/text_scratch.py train     --out $D --bits 16 --z_mode prefix --z_dropout 0.5 --free_bits 0.3 --tag v6
+python probes/text_scratch.py fit_prior --out $D --bits 16 --tag v6
+python probes/text_scratch.py sample    --out $D --bits 0 --n_samples 512 --sample_steps 2 4 8 16
+python probes/text_scratch.py sample    --out $D --bits 16 --tag v6 --n_samples 512 --sample_steps 2 4 8 16 --z_from learned
+python probes/text_scratch.py sample    --out $D --bits 16 --tag v6 --n_samples 512 --sample_steps 2 4 8 16 --null_z
+python probes/text_scratch.py compare   --out $D
+```
+
+On Colab, call `drive.flush_and_unmount()` before closing a runtime that wrote large files to
+Drive; otherwise they may never finish uploading.
+
 On a GPU with flash-attention (Ampere or newer), `eval.checkpoint_path=kuleshov-group/mdlm-owt`
-also works; drop `trainer.precision=32`.
+also works for the MDLM commands; drop `trainer.precision=32`.
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
-| `main.py` | Entry point: training, `ppl_eval`, `sample_eval`, `sample_sweep`, `revealer_label`, `revealer_train` |
+| `main.py` | Entry point: training, `ppl_eval`, `sample_eval`, `sample_sweep`, `revealer_label`, `revealer_train`, `latent_finetune` |
 | `diffusion.py` | Forward/reverse diffusion, samplers (incl. `ordered`), generative perplexity |
 | `revealer.py` | Revealer head, information-gain labels, ranking loss, metrics |
+| `latent.py` | Latent adapter for a pretrained MDLM: encoder, oracle bits, conditioning hooks, checkpoints |
 | `probes/latent_probe.py` | Synthetic latent-bits probe |
+| `probes/text_scratch.py` | From-scratch latent experiment on real text |
 | `noise_schedule.py` | Noise schedules |
 | `dataloader.py` | Datasets and dataloaders |
 | `models/` | Denoisers: DiT, AR transformer, Mamba |
-| `configs/` | Hydra configs (data, models, noise, sampling, revealer) |
+| `configs/` | Hydra configs (data, models, noise, sampling, revealer, latent) |
 | `scripts/` | Upstream Slurm scripts |
-| `docs/` | Colab guide, figures, probe results |
+| `docs/` | Colab guide, figures, probe and from-scratch results |
 
 ## Based on MDLM
 

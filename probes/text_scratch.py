@@ -121,9 +121,12 @@ def _blocks(d, n_layers, n_heads):
 
 class Denoiser(nn.Module):
 
-  def __init__(self, V, L, d, n_layers, n_heads, bits):
+  def __init__(self, V, L, d, n_layers, n_heads, bits, z_mode='add',
+               n_prefix=4):
     super().__init__()
     self.V, self.bits = V, bits
+    self.z_mode = z_mode if bits else None
+    assert self.z_mode in (None, 'add', 'prefix'), z_mode
     self.tok = nn.Embedding(V + 1, d)                      # id V = MASK
     nn.init.normal_(self.tok.weight, std=0.02)
     self.pos = nn.Parameter(torch.randn(L, d) * 0.02)
@@ -131,15 +134,35 @@ class Denoiser(nn.Module):
     self.norm = nn.LayerNorm(d)
     # created last so every arm's trunk has the same initialisation; small
     # init so z starts at the scale of the (std 0.02) token embeddings
-    self.z_proj = nn.Linear(bits, d) if bits else None
+    self.z_proj, self.n_prefix = None, 0
+    if self.z_mode == 'add':        # z added to every token embedding
+      self.z_proj = nn.Linear(bits, d)
+    elif self.z_mode == 'prefix':   # z as n_prefix extra tokens to attend to
+      self.n_prefix = n_prefix
+      self.z_proj = nn.Linear(bits, n_prefix * d)
+      self.null_prefix = nn.Parameter(torch.randn(n_prefix, d) * 0.02)
+      self.prefix_pos = nn.Parameter(torch.randn(n_prefix, d) * 0.02)
     if self.z_proj is not None:
       nn.init.normal_(self.z_proj.weight, std=0.02)
       nn.init.zeros_(self.z_proj.bias)
 
-  def hidden(self, x, z=None):
+  def hidden(self, x, z=None, keep=None):
+    """keep [B] in {0,1}: 0 replaces z by the 'no latent' input (all zeros
+    after the 2z-1 encoding), used for latent dropout and null-z sampling."""
     h = self.tok(x) + self.pos[:x.shape[1]]
-    if self.z_proj is not None:
-      h = h + self.z_proj(2 * z - 1).unsqueeze(1)
+    if self.z_mode == 'add':
+      zs = 2 * z - 1
+      if keep is not None:
+        zs = zs * keep[:, None].to(zs.dtype)
+      h = h + self.z_proj(zs).unsqueeze(1)
+    elif self.z_mode == 'prefix':
+      P = self.n_prefix
+      pre = self.z_proj(2 * z - 1).view(len(x), P, -1)
+      if keep is not None:   # dropped / null: a learned 'no latent' prefix
+        k = keep[:, None, None].to(pre.dtype)
+        pre = k * pre + (1 - k) * self.null_prefix.to(pre.dtype)
+      h = torch.cat([pre + self.prefix_pos.to(pre.dtype), h], 1)
+      return self.norm(self.body(h))[:, P:]
     return self.norm(self.body(h))
 
   def logits(self, h):                                     # tied output layer
@@ -149,9 +172,11 @@ class Denoiser(nn.Module):
 class Encoder(nn.Module):
   """q(z|x0): shares the denoiser's token embedding, small transformer, K bits."""
 
-  def __init__(self, denoiser, L, d_enc, n_layers, n_heads, bits):
+  def __init__(self, denoiser, L, d_enc, n_layers, n_heads, bits,
+               detach_emb=True):
     super().__init__()
     self.den = [denoiser]                                  # not a submodule
+    self.detach_emb = detach_emb
     d = denoiser.tok.weight.shape[1]
     self.proj = nn.Linear(d, d_enc)
     self.pos = nn.Parameter(torch.randn(L, d_enc) * 0.02)
@@ -160,7 +185,9 @@ class Encoder(nn.Module):
     self.head = nn.Linear(d_enc, bits)
 
   def forward(self, x0):
-    h = self.proj(self.den[0].tok(x0)) + self.pos[:x0.shape[1]]
+    w = self.den[0].tok.weight
+    emb = F.embedding(x0, w.detach() if self.detach_emb else w)
+    h = self.proj(emb) + self.pos[:x0.shape[1]]
     return self.head(self.norm(self.body(h)).mean(1))
 
 
@@ -174,7 +201,7 @@ def kl_bits(p):
   return p * (2 * p).log() + (1 - p) * (2 * (1 - p)).log()   # [B, K] nats
 
 
-def diffusion_nll(model, x0, z, t=None, chunk=8192):
+def diffusion_nll(model, x0, z, t=None, chunk=8192, keep=None):
   """MDLM loss, linear schedule: (1/t) * sum of CE over masked tokens. [B]"""
   B, L = x0.shape
   if t is None:   # stratified
@@ -183,7 +210,7 @@ def diffusion_nll(model, x0, z, t=None, chunk=8192):
   t = t.clamp(min=1e-3)
   masked = torch.rand(B, L, device=x0.device) < t[:, None]
   xt = torch.where(masked, model.V, x0)
-  h = model.hidden(xt, z)
+  h = model.hidden(xt, z, keep)
   hm, tgt = h[masked], x0[masked]
   seq = masked.nonzero()[:, 0]
   ce = torch.cat([F.cross_entropy(model.logits(hm[i:i + chunk]).float(),
@@ -213,9 +240,11 @@ class EMA:
 
 def build(args, V):
   torch.manual_seed(args.seed)
-  model = Denoiser(V, args.seq_len, args.d, args.layers, args.heads, args.bits)
+  model = Denoiser(V, args.seq_len, args.d, args.layers, args.heads, args.bits,
+                   getattr(args, 'z_mode', 'add'), getattr(args, 'n_prefix', 4))
   enc = (Encoder(model, args.seq_len, args.enc_d, args.enc_layers, args.heads,
-                 args.bits) if args.bits else None)
+                 args.bits, detach_emb=getattr(args, 'enc_detach', True))
+         if args.bits else None)
   return model, enc
 
 
@@ -232,7 +261,7 @@ def evaluate(model, enc, data, args, device, n_seqs=256):
   are paired across steps and between arms; plus NLL with z from the prior."""
   model.eval()
   out = {}
-  for source in (['encoder', 'prior'] if enc is not None else ['none']):
+  for source in (['encoder', 'prior', 'null'] if enc is not None else ['none']):
     devs = [torch.cuda.current_device()] if device == 'cuda' else []
     with torch.random.fork_rng(devices=devs):
       torch.manual_seed(1234)
@@ -246,14 +275,17 @@ def evaluate(model, enc, data, args, device, n_seqs=256):
             p = torch.sigmoid(enc(x0).float())
             z = torch.bernoulli(p, generator=gz)
             kl += kl_bits(p).sum().item()
-          elif source == 'prior':
+          elif source in ('prior', 'null'):
             z = torch.bernoulli(torch.full((64, args.bits), 0.5, device=device),
                                 generator=gz)
+          keep = (torch.zeros(64, device=device) if source == 'null' else None)
           with torch.autocast(device, dtype=torch.bfloat16, enabled=device == 'cuda'):
-            nll += diffusion_nll(model, x0, z).sum().item()
+            nll += diffusion_nll(model, x0, z, keep=keep).sum().item()
     n_tok = 2 * n_seqs * args.seq_len
     if source == 'prior':
       out['nll_prior_z'] = nll / n_tok
+    elif source == 'null':
+      out['nll_null_z'] = nll / n_tok
     else:
       out['nll'] = nll / n_tok
       out['kl_per_seq'] = kl / (2 * n_seqs)
@@ -313,8 +345,8 @@ def train(args, device, log):
     m['step'] = step
     history.append(m)
     log(f"[eval {step}] bound/tok {m['bound']:.4f}  nll/tok {m['nll']:.4f}"
-        + (f"  (prior z {m['nll_prior_z']:.4f}, KL {m['kl_per_seq']:.2f} nats/seq)"
-           if enc else ''))
+        + (f"  (prior z {m['nll_prior_z']:.4f}, no z {m['nll_null_z']:.4f}, "
+           f"KL {m['kl_per_seq']:.2f} nats/seq)" if enc else ''))
 
   model.train()
   t0, run = time.time(), [0.0, 0.0, 0]
@@ -323,14 +355,26 @@ def train(args, device, log):
       g['lr'] = lr_at(step)
     x0 = data.batch(args.batch, step, args.seed).to(device, non_blocking=True)
     with torch.autocast(device, dtype=torch.bfloat16, enabled=device == 'cuda'):
+      keep, kl_term = None, torch.zeros((), device=device)
       if enc is not None:
         z, p = bernoulli_st(enc(x0).float())
-        kl = kl_bits(p).sum(-1)
+        kb = kl_bits(p)                                     # [B, K]
+        keep = torch.ones(args.batch, device=device)
+        if args.z_dropout > 0:   # the denoiser must also work without z
+          keep = (torch.rand(args.batch, device=device) >= args.z_dropout).float()
+        if step < args.z_start:  # latent switched off early in training
+          keep = torch.zeros_like(keep)
+        kl = (kb.sum(-1) * keep)                            # logged; 0 if dropped
+        n_keep = keep.sum().clamp(min=1)
+        per_bit = (kb * keep[:, None]).sum(0) / n_keep      # mean over kept seqs
+        if args.free_bits > 0:   # no KL pressure until a bit carries free_bits
+          per_bit = per_bit.clamp(min=args.free_bits)
+        kl_term = per_bit.sum() * (keep.sum() > 0) * (n_keep / args.batch)
       else:
         z, kl = None, torch.zeros(args.batch, device=device)
-      nll = diffusion_nll(model, x0, z)
+      nll = diffusion_nll(model, x0, z, keep=keep)
     beta = args.beta * min(1.0, (step + 1) / max(1, args.kl_warmup * args.steps))
-    loss = (nll.mean() + beta * kl.mean()) / args.seq_len
+    loss = (nll.mean() + beta * kl_term) / args.seq_len
     opt.zero_grad(set_to_none=True)
     loss.backward()
     torch.nn.utils.clip_grad_norm_(params, 1.0)
@@ -356,25 +400,180 @@ def train(args, device, log):
 
 
 # ----------------------------------------------------------------------------
+# Learned prior over codes
+# ----------------------------------------------------------------------------
+class ARBitsPrior(nn.Module):
+  """p(z) = prod_k p(z_k | z_<k), each a logistic regression on earlier bits."""
+
+  def __init__(self, bits):
+    super().__init__()
+    self.bits = bits
+    self.w = nn.Parameter(torch.zeros(bits, bits))
+    self.b = nn.Parameter(torch.zeros(bits))
+    self.register_buffer('mask', torch.tril(torch.ones(bits, bits), -1))
+
+  def logits(self, z):
+    return (2 * z - 1) @ (self.w * self.mask).T + self.b
+
+  def log_prob(self, z):
+    return -F.binary_cross_entropy_with_logits(
+      self.logits(z), z, reduction='none').sum(-1)
+
+  @torch.no_grad()
+  def sample(self, n, device):
+    z = torch.zeros(n, self.bits, device=device)
+    for k in range(self.bits):
+      z[:, k] = torch.bernoulli(torch.sigmoid(self.logits(z)[:, k]))
+    return z
+
+
+class CategoricalPrior(nn.Module):
+  """Smoothed histogram over all 2^K codes."""
+
+  def __init__(self, bits, counts=None, alpha=1.0):
+    super().__init__()
+    self.bits = bits
+    c = counts if counts is not None else torch.zeros(2 ** bits)
+    self.register_buffer('logp', ((c + alpha) / (c + alpha).sum()).log())
+    self.register_buffer('pow2', 2 ** torch.arange(bits))
+
+  def log_prob(self, z):
+    return self.logp[(z * self.pow2).sum(-1).long()]
+
+  @torch.no_grad()
+  def sample(self, n, device):
+    codes = torch.multinomial(self.logp.exp(), n, replacement=True)
+    return ((codes[:, None] // self.pow2) % 2).float().to(device)
+
+
+def load_arm(args, device):
+  """EMA denoiser + encoder of an arm, and its training args."""
+  data = TokenData(args.out, args.seq_len)
+  d = arm_dir(args)
+  ck = torch.load(os.path.join(d, 'ckpt.pt'), map_location='cpu')
+  a = argparse.Namespace(**{**vars(args), **{k: ck['args'][k] for k in
+                            ('d', 'layers', 'heads', 'bits', 'enc_d', 'enc_layers',
+                             'seq_len', 'z_mode', 'n_prefix') if k in ck['args']}})
+  model, enc = build(a, data.vocab)
+  model.load_state_dict(ck['model'])
+  n_model = len(list(model.parameters()))
+  with torch.no_grad():   # EMA weights: denoiser first, then the encoder
+    for p, s in zip(model.parameters(), ck['ema'][:n_model]):
+      p.copy_(s)
+    if enc is not None:
+      enc.load_state_dict(ck['enc'])
+      for p, s in zip(enc.parameters(), ck['ema'][n_model:]):
+        p.copy_(s)
+      enc.to(device).eval()
+  model.to(device).eval()
+  return data, d, ck, a, model, enc
+
+
+@torch.no_grad()
+def encode_windows(enc, data, n, step0, seed, split, device):
+  """q(z|x) probabilities for n windows."""
+  ps = []
+  for i in range(0, n, 256):
+    x = data.batch(min(256, n - i), step0 + i, seed, split).to(device)
+    ps.append(torch.sigmoid(enc(x).float()))
+  return torch.cat(ps)
+
+
+def fit_prior_cmd(args, device, log):
+  """Fit priors over codes to the encoder's posterior samples on training
+  text; keep the one with the best held-out log-likelihood. Also estimates
+  KL(q || prior) and the bound it implies."""
+  data, d, ck, a, model, enc = load_arm(args, device)
+  assert enc is not None, 'fit_prior needs a latent arm'
+  K = a.bits
+  p_tr = encode_windows(enc, data, args.prior_train, 300_000, args.seed, 'train', device)
+  p_va = encode_windows(enc, data, args.prior_val, 400_000, args.seed, 'val', device)
+  g = torch.Generator(device=device).manual_seed(0)
+  z_tr = torch.bernoulli(p_tr, generator=g)
+  z_va = torch.bernoulli(p_va, generator=g)
+  logq_va = (z_va * p_va.clamp_min(1e-9).log()
+             + (1 - z_va) * (1 - p_va).clamp_min(1e-9).log()).sum(-1)
+  codes = (z_tr * (2 ** torch.arange(K, device=device))).sum(1).long()
+  log(f'{len(z_tr)} training codes: {len(torch.unique(codes))} distinct of {2 ** K}; '
+      f'mean bit certainty {(2 * (p_tr - 0.5).abs()).mean():.2f}')
+
+  cands = {'uniform': CategoricalPrior(K, alpha=1.0).to(device)}
+  rates = z_tr.mean(0).clamp(1e-4, 1 - 1e-4)
+  indep = ARBitsPrior(K).to(device)
+  with torch.no_grad():
+    indep.b.copy_((rates / (1 - rates)).log())
+  cands['independent bits'] = indep
+  ar = ARBitsPrior(K).to(device)
+  opt = torch.optim.Adam(ar.parameters(), lr=0.05)
+  for it in range(500):
+    idx = torch.randint(0, len(z_tr), (4096,), device=device)
+    loss = -ar.log_prob(z_tr[idx]).mean()
+    opt.zero_grad()
+    loss.backward()
+    opt.step()
+  cands['autoregressive bits'] = ar
+  counts = torch.bincount(codes, minlength=2 ** K).float()
+  for alpha in (0.01, 0.1, 1.0):
+    cands[f'histogram (alpha={alpha})'] = CategoricalPrior(K, counts, alpha).to(device)
+
+  hist = json.load(open(os.path.join(d, 'history.json')))[-1]
+  best, best_nll, rows = None, float('inf'), []
+  for name, prior in cands.items():
+    with torch.no_grad():
+      lp = prior.log_prob(z_va)
+    nll = -lp.mean().item()
+    kl = (logq_va - lp).mean().item()
+    rows.append((name, nll, kl))
+    if nll < best_nll:
+      best, best_nll = name, nll
+  log(f"{'prior':<24}{'held-out NLL of codes':>24}{'KL(q||prior)':>15}"
+      f"{'bound/tok':>12}   (nats; uniform = {K * math.log(2):.2f})")
+  for name, nll, kl in rows:
+    log(f"{name:<24}{nll:>24.2f}{kl:>15.2f}{hist['nll'] + kl / a.seq_len:>12.4f}"
+        + ('   <- best' if name == best else ''))
+  log(f"(bound/tok = encoder-z NLL {hist['nll']:.4f} + KL/{a.seq_len}; "
+      f"same model with z off: {hist.get('nll_null_z', float('nan')):.4f})")
+  prior = cands[best]
+  torch.save({'type': type(prior).__name__, 'name': best, 'bits': K,
+              'state': prior.state_dict()}, os.path.join(d, 'prior.pt'))
+  log(f"Saved {best!r} prior to {os.path.join(d, 'prior.pt')}")
+
+
+def load_prior(d, device):
+  ck = torch.load(os.path.join(d, 'prior.pt'), map_location='cpu')
+  prior = (ARBitsPrior(ck['bits']) if ck['type'] == 'ARBitsPrior'
+           else CategoricalPrior(ck['bits']))
+  prior.load_state_dict(ck['state'])
+  return prior.to(device).eval(), ck['name']
+
+
+# ----------------------------------------------------------------------------
 # Sample + metrics
 # ----------------------------------------------------------------------------
 @torch.no_grad()
-def sample(model, n, L, steps, bits, device, batch=128, row_chunk=2048):
+def sample(model, n, L, steps, bits, device, batch=128, row_chunk=2048,
+           null_z=False, z_pool=None, prior=None):
   """Ancestral sampling, linear schedule: each masked token is revealed with
   prob (t - s) / t per step; revealed values drawn in float64 from p(x0|xt,z)."""
   out = []
   for i in range(0, n, batch):
     b = min(batch, n - i)
     x = torch.full((b, L), model.V, device=device)
-    z = (torch.bernoulli(torch.full((b, bits), 0.5, device=device))
-         if bits else None)
+    if bits and z_pool is not None:   # codes of real documents
+      z = z_pool[torch.randint(0, len(z_pool), (b,), device=z_pool.device)].to(device)
+    elif bits and prior is not None:  # learned prior over codes
+      z = prior.sample(b, device)
+    else:
+      z = (torch.bernoulli(torch.full((b, bits), 0.5, device=device))
+           if bits else None)
+    keep = torch.zeros(b, device=device) if (bits and null_z) else None
     for k in range(steps):
       t, s = 1 - k / steps, 1 - (k + 1) / steps
       reveal = (x == model.V) & (torch.rand(b, L, device=device) < (t - s) / t)
       if not reveal.any():
         continue
       with torch.autocast(device, dtype=torch.bfloat16, enabled=device == 'cuda'):
-        h = model.hidden(x, z)[reveal]
+        h = model.hidden(x, z, keep)[reveal]
       vals = []
       for j in range(0, len(h), row_chunk):
         probs = F.softmax(model.logits(h[j:j + row_chunk]).double(), -1)
@@ -397,14 +596,15 @@ def text_metrics(x, eos, scorer=None, device='cuda', batch=16):
     reps.append(1 - len(set(grams)) / len(grams))
   out = {'entropy': float(np.mean(ents)), 'rep4': float(np.mean(reps))}
   if scorer is not None:
-    nll, n = 0.0, 0
+    per = []
     for i in range(0, len(x), batch):
       xb = x[i:i + batch].to(device)
       inp = torch.cat([torch.full((len(xb), 1), eos, device=device), xb], 1)
       logits = scorer(inp).logits[:, :-1].float()
-      nll += F.cross_entropy(logits.transpose(1, 2), xb, reduction='sum').item()
-      n += xb.numel()
-    out['gen_ppl'] = math.exp(nll / n)
+      per += F.cross_entropy(logits.transpose(1, 2), xb,
+                             reduction='none').mean(1).tolist()
+    out['gen_ppl'] = math.exp(float(np.mean(per)))
+    out['sample_nll'] = per                 # per-sample mean NLL, for bootstraps
   return out
 
 
@@ -414,21 +614,23 @@ def load_scorer(device):
 
 
 def sample_cmd(args, device, log, scorer=None):
-  data = TokenData(args.out, args.seq_len)
-  d = arm_dir(args)
-  ck = torch.load(os.path.join(d, 'ckpt.pt'), map_location='cpu')
-  a = argparse.Namespace(**{**vars(args), **{k: ck['args'][k] for k in
-                            ('d', 'layers', 'heads', 'bits', 'enc_d', 'enc_layers', 'seq_len')}})
-  model, _ = build(a, data.vocab)
-  model.load_state_dict(ck['model'])
-  n_model = len(list(model.parameters()))
-  with torch.no_grad():   # EMA weights (the denoiser's share of the shadow list)
-    for p, s in zip(model.parameters(), ck['ema'][:n_model]):
-      p.copy_(s)
-  model.to(device).eval()
+  data, d, ck, a, model, enc = load_arm(args, device)
+  z_pool, prior = None, None
+  if args.z_from == 'data' and a.bits:
+    xs_p = encode_windows(enc, data, args.z_pool, 50_000, args.seed, 'val', device)
+    z_pool = torch.bernoulli(xs_p)
+    codes = (z_pool * (2 ** torch.arange(a.bits, device=device))).sum(1)
+    log(f'z from {len(z_pool)} real held-out windows: {len(torch.unique(codes))} '
+        f'distinct codes; bit rates {z_pool.mean(0).min():.2f}-{z_pool.mean(0).max():.2f}; '
+        f'mean bit certainty {(2 * (xs_p - 0.5).abs()).mean():.2f}')
+  elif args.z_from == 'learned' and a.bits:
+    prior, pname = load_prior(d, device)
+    log(f'z from the learned prior ({pname})')
   scorer = scorer or load_scorer(device)
   torch.manual_seed(args.seed + 7)
-  res = {'arm': os.path.basename(d), 'step': ck['step'], 'by_steps': {}}
+  suffix = ('_nullz' if args.null_z else '_dataz' if z_pool is not None
+            else '_learnedz' if prior is not None else '')
+  res = {'arm': os.path.basename(d) + suffix, 'step': ck['step'], 'by_steps': {}}
   ref_path = os.path.join(args.out, 'reference.json')
   if not os.path.exists(ref_path):
     real = data.batch(args.n_samples, 0, args.seed, 'val')
@@ -438,13 +640,14 @@ def sample_cmd(args, device, log, scorer=None):
         f"{ref['entropy']:.3f}  rep4 {ref['rep4']:.3f}")
   for steps in args.sample_steps:
     t0 = time.time()
-    x = sample(model, args.n_samples, a.seq_len, steps, a.bits, device)
+    x = sample(model, args.n_samples, a.seq_len, steps, a.bits, device,
+               null_z=args.null_z, z_pool=z_pool, prior=prior)
     m = text_metrics(x, data.eos, scorer, device)
     m['sec'] = time.time() - t0
     res['by_steps'][steps] = m
     log(f"[{res['arm']}] steps={steps:>3}  gen_ppl {m['gen_ppl']:8.1f}  "
         f"entropy {m['entropy']:.3f}  rep4 {m['rep4']:.3f}")
-  json.dump(res, open(os.path.join(d, 'samples.json'), 'w'), indent=1)
+  json.dump(res, open(os.path.join(d, f'samples{suffix}.json'), 'w'), indent=1)
   if args.show:
     import transformers
     tok = transformers.AutoTokenizer.from_pretrained('gpt2')
@@ -461,23 +664,29 @@ def compare_cmd(args, log):
     if not os.path.isdir(p) or not d.startswith('bits'):
       continue
     h = json.load(open(os.path.join(p, 'history.json')))[-1]
-    line = (f"{d:<14} step {h['step']:>6}  bound {h['bound']:.4f}  nll {h['nll']:.4f}"
-            + (f"  prior-z nll {h['nll_prior_z']:.4f}  KL {h['kl_per_seq']:.2f}"
-               if 'nll_prior_z' in h else ''))
+    line = (f"{d:<16} step {h['step']:>6}  bound {h['bound']:.4f}  nll {h['nll']:.4f}"
+            + (f"  prior-z nll {h['nll_prior_z']:.4f}" if 'nll_prior_z' in h else '')
+            + (f"  no-z nll {h['nll_null_z']:.4f}" if 'nll_null_z' in h else '')
+            + (f"  KL {h['kl_per_seq']:.2f}" if 'kl_per_seq' in h else ''))
     log(line)
-    sp = os.path.join(p, 'samples.json')
-    if os.path.exists(sp):
-      s = json.load(open(sp))['by_steps']
-      for k in sorted(s, key=int):
-        m = s[k]
-        log(f"    steps {int(k):>3}: gen_ppl {m['gen_ppl']:8.1f}  entropy "
-            f"{m['entropy']:.3f}  rep4 {m['rep4']:.3f}")
+    for name, label in (('samples.json', 'z ~ prior' if 'nll_prior_z' in h else ''),
+                        ('samples_learnedz.json', 'z ~ learned prior'),
+                        ('samples_dataz.json', 'z from real docs'),
+                        ('samples_nullz.json', 'no z')):
+      sp = os.path.join(p, name)
+      if os.path.exists(sp):
+        s = json.load(open(sp))['by_steps']
+        for k in sorted(s, key=int):
+          m = s[k]
+          log(f"    steps {int(k):>3}: gen_ppl {m['gen_ppl']:8.1f}  entropy "
+              f"{m['entropy']:.3f}  rep4 {m['rep4']:.3f}  {label}")
 
 
 def main():
   ap = argparse.ArgumentParser(description=__doc__,
                                formatter_class=argparse.RawDescriptionHelpFormatter)
-  ap.add_argument('cmd', choices=['prepare', 'train', 'sample', 'compare'])
+  ap.add_argument('cmd', choices=['prepare', 'train', 'fit_prior', 'sample',
+                                  'compare'])
   ap.add_argument('--out', required=True)
   ap.add_argument('--tokens', type=int, default=500_000_000)
   ap.add_argument('--seq_len', type=int, default=256)
@@ -489,6 +698,25 @@ def main():
   ap.add_argument('--enc_layers', type=int, default=2)
   ap.add_argument('--beta', type=float, default=0.1)
   ap.add_argument('--kl_warmup', type=float, default=0.1)
+  ap.add_argument('--z_mode', choices=['add', 'prefix'], default='add',
+                  help='add z to every token embedding, or give it as prefix tokens')
+  ap.add_argument('--n_prefix', type=int, default=4)
+  ap.add_argument('--z_dropout', type=float, default=0.0,
+                  help='fraction of training sequences given no z (latent dropout)')
+  ap.add_argument('--free_bits', type=float, default=0.0,
+                  help='KL floor per bit (nats) in training; max useful ~0.69')
+  ap.add_argument('--z_start', type=int, default=0,
+                  help='train without z until this step (latent introduced later)')
+  ap.add_argument('--enc_detach', type=int, default=1,
+                  help='1: encoder reads the token embedding without training it')
+  ap.add_argument('--z_from', choices=['prior', 'data', 'learned'], default='prior',
+                  help='sample: z uniform, from codes of real held-out text, or '
+                       'from the prior fitted by fit_prior')
+  ap.add_argument('--prior_train', type=int, default=100_000)
+  ap.add_argument('--prior_val', type=int, default=10_000)
+  ap.add_argument('--z_pool', type=int, default=1024)
+  ap.add_argument('--null_z', action='store_true',
+                  help='sample: run a latent model with z switched off')
   ap.add_argument('--steps', type=int, default=15_000)
   ap.add_argument('--batch', type=int, default=128)
   ap.add_argument('--lr', type=float, default=6e-4)
@@ -512,6 +740,8 @@ def main():
     prepare(args.out, args.tokens, args.seed, log=log)
   elif args.cmd == 'train':
     train(args, device, log)
+  elif args.cmd == 'fit_prior':
+    fit_prior_cmd(args, device, log)
   elif args.cmd == 'sample':
     sample_cmd(args, device, log)
   else:
